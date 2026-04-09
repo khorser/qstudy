@@ -262,18 +262,3 @@ class CircuitSlicer:
             with self.bloch:
                 clear_output(wait=True)
                 display(plot_bloch_multivector(sv))
-
-#class Test:
-#    def o0(self):
-#        return [0]
-#    def get_options(self):
-#        return [("0", self.o0)]
-#    def get_circuit(self, o, label=""):
-#        q = QuantumRegister(2, "q")
-#        r = ClassicalRegister(2, "r")
-#        c = QuantumCircuit(q, r)
-#        c.x(0)
-#        c.measure(q, r)
-#        return c
-#
-#CircuitSlicer(Test());

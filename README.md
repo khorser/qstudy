@@ -1,2 +1,2 @@
 # qstudy
-My quantum computing studies. You need Jupytext to convert notebooks back to .ipynb
+My quantum computing studies. You need Jupytext to convert notebooks back to .ipynb with `jupytext --to notebook <file.py>`
