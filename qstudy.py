@@ -172,8 +172,7 @@ class CircuitSlicer:
             try:
                 self.qc = self.algo.get_circuit(self.option.value, self.option.label)
                 nc = self.instrument_circuit(self.qc)
-                # might need decompose() for controlled custom gates etc
-                self.res = AerSimulator().run(nc, shots=self.nsims.value, memory=True).result()
+                self.res = AerSimulator().run(nc.decompose(), shots=self.nsims.value, memory=True).result()
                 clear_output(wait=True)
                 def get_clbits(a, x):
                     pos, prev, txt = a

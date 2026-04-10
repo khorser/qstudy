@@ -14,23 +14,25 @@
 # ---
 
 # %%
+from collections import Counter
+from functools import partial
 from qiskit import QuantumRegister, ClassicalRegister, AncillaRegister, QuantumCircuit, __version__ as qiskitver
-from qiskit.quantum_info import Statevector, Operator
+from qiskit.quantum_info import Statevector, partial_trace
 from qiskit.circuit.library import UnitaryGate, UGate
 from qiskit.visualization import array_to_latex
 import numpy as np
 import sympy as sp
+
 from IPython.display import HTML, Latex
-from collections import Counter
 
 from qstudy import CircuitSlicer
 qiskitver
 
 
 # %% [markdown]
-# # Entanglement Basics
+# # Entanglement in Action
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Teleportation
 
 # %%
@@ -107,7 +109,7 @@ class Coding:
         b1 = ClassicalRegister(1, "b1")
         b2 = ClassicalRegister(1, "b2")
         c = QuantumCircuit(tmp, qa, qb, a1, a2, b1, b2)
-        c.append(UnitaryGate(Operator(f()), label="Init"), tmp) 
+        c.append(f().to_gate(label="Init"), tmp)
         c.measure(tmp[0], a1)
         c.measure(tmp[1], a2)
         c.barrier(label="init")
@@ -235,12 +237,12 @@ def checkCHSHPhase(result, _option):
         return (a!=b) == int(x)&int(y)
     c = Counter(map(success, result.get_memory()))
     return HTML(f"<b>Success count:</b> {c[True]}")
-    
+
 CircuitSlicer(CHSH_Phase(), postproc=checkCHSHPhase, nsims=10);
 
 
 # %% [markdown]
-# # Deutsch
+# # Deutsch et al
 
 # %% [markdown]
 #
@@ -293,12 +295,12 @@ class Deutsch:
         c.h(x)
         c.h(y)
         c.barrier(label="prep")
-        c.append(UnitaryGate(Operator(f()), label=f"$U_{{{label}}}$"), [x, y])
+        c.append(f().to_gate(label=f"$U_{{{label}}}$"), [x, y])
         c.barrier(label="apply")
         c.h(x)
         c.barrier(label="done")
         c.measure(x, r)
-        return c    
+        return c
 
 
 # %%
@@ -306,7 +308,7 @@ CircuitSlicer(Deutsch());
 
 
 # %% [markdown]
-# # Deutsch-Jozsa
+# ## Deutsch-Jozsa
 
 # %%
 class DeutschJozsa:
@@ -359,12 +361,12 @@ class DeutschJozsa:
         c.h(x)
         c.h(y)
         c.barrier(label="prep")
-        c.append(UnitaryGate(Operator(f()), label=f"$U_{{{label}}}$"), [*x, *y])
+        c.append(f().to_gate(label=f"$U_{{{label}}}$"), [*x, *y])
         c.barrier(label="apply")
         c.h(x)
         c.barrier(label="done")
         c.measure(x, r)
-        return c    
+        return c
 
 
 # %%
@@ -410,7 +412,7 @@ CircuitSlicer(DeutschJozsa(l), postproc=BernsteinVazirani, options=[("BV", bv)],
 # 1 & 0 & 0 \\
 # 0 & 1 & 1 \\
 # 1 & 0 & 0 \\
-# 0 & 1 & 1 
+# 0 & 1 & 1
 # \end{pmatrix}
 # $$
 
@@ -426,7 +428,7 @@ class Simon:
         c.cx(1, [5, 7])
         c.cx(2, [5, 7])
         return c
-        
+
     def get_options(self):
         return [("ibm", self.fixed_ibm_example)]
 
@@ -439,7 +441,7 @@ class Simon:
         c.barrier(label="init")
         c.h(x)
         c.barrier(label="prep")
-        c.append(UnitaryGate(Operator(f()), label=f"$U_{{{label}}}$"), [*x, *y])
+        c.append(f().to_gate(label=f"$U_{{{label}}}$"), [*x, *y])
         c.barrier(label="apply")
         c.measure(y, tmp) # COLLAPSE
         c.h(x)
@@ -480,7 +482,7 @@ res = CircuitSlicer(simon, nsims=3, common_factors=False, bloch=False, postproc=
 
 # %%
 # circuit check
-op = Operator(simon.fixed_ibm_example())
+op = simon.fixed_ibm_example().to_gate()
 
 for i in range(3):
     v = Statevector.from_label(f"{1<<i:08b}")
@@ -491,3 +493,132 @@ for i in range(3):
     <div>{v.evolve(op).draw("latex").data}</div>
 </div>
 """))
+
+
+# %%
+class T:
+    def o0(self):
+        return [0, 0]
+    def get_options(self):
+        return [("option 0", self.o0)]
+    def get_circuit(self, f, label=""):
+        qc = QuantumCircuit(2, 2)
+        qc.barrier(label="init")
+        qc.h(0)
+        qc.cx(0, 1)
+        qc.barrier(label="prep")
+        qc.measure([0, 1], [0, 1])
+        return qc
+CircuitSlicer(T());
+
+# %% [markdown]
+# # Grover
+
+# %% [markdown]
+# ## Preliminary Notes
+
+# %%
+import ipywidgets as widgets
+x = QuantumRegister(2, "x")
+y = AncillaRegister(1, "y")
+u_and = QuantumCircuit(x, y, name="AND")
+u_and.mcx(x, y)
+
+l = widgets.Output()
+with l:
+    display(u_and.draw("mpl"))
+rows = ""
+for v in range(4):
+    s = Statevector.from_label(f"{v:03b}")
+    rows += fr"""<tr><td>${s.draw('latex_source')}$</td>
+    <td>$\longrightarrow$</td>
+    <td>${s.evolve(u_and).draw('latex_source')}$</td></tr>"""
+display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
+
+
+# %%
+def make_or(n):
+    x = QuantumRegister(n, "x")
+    y = AncillaRegister(1, "y")
+    c = QuantumCircuit(x, y, name="OR")
+    c.x(x)
+    c.mcx(x, y)
+    c.x([*x, *y])
+    return c
+
+u_or = make_or(2)
+l = widgets.Output()
+with l:
+    display(u_or.draw("mpl"))
+rows = ""
+for v in range(8):
+    s = Statevector.from_label(f"{v:03b}")
+    rows += fr"""<tr><td>${s.draw('latex_source')}$</td>
+    <td>$\longrightarrow$</td>
+    <td>${s.evolve(u_or).draw('latex_source')}$</td></tr>"""
+display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
+
+# %%
+x = QuantumRegister(1, "x")
+y = AncillaRegister(1, "0")
+u_fanout = QuantumCircuit(x, y, name="fanout")
+u_fanout.cx(x, y)
+
+l = widgets.Output()
+with l:
+    display(u_fanout.draw("mpl"))
+rows = ""
+for v in range(2):
+    s = Statevector.from_label(f"{v:02b}")
+    rows += fr"""<tr><td>${s.draw('latex_source')}$</td>
+    <td>$\longrightarrow$</td>
+    <td>${s.evolve(u_fanout).draw('latex_source')}$</td></tr>"""
+display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
+
+
+# %%
+def make_zf(u):
+    c = u.copy_empty_like()
+    c.x(c.qubits[-1])
+    c.h(c.qubits[-1])
+    c.append(u.to_gate(label=f"$U_{{{u.name}}}$"), c.qubits)
+    return c
+
+z_or = make_zf(make_or(3))
+l = widgets.Output()
+with l:
+    display(z_or.draw("mpl"))
+
+rows = ""
+for v in range(2**(z_or.num_qubits-1)):
+    s = Statevector.from_label(f"{v:0{z_or.num_qubits}b}")
+    r = s.evolve(z_or)
+    dm = partial_trace(r, [z_or.num_qubits-1])
+    partial_s = dm.to_statevector()
+    rows += fr"""<tr><td>${s.draw('latex_source')}$</td>
+    <td>$\longrightarrow$</td><td>${r.draw('latex_source')}$</td>
+    <td>:</td><td>${partial_s.draw('latex_source')}$</td></tr>"""
+
+display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
+
+# %%
+# some SymPy experiments
+from sympy.physics.quantum import Ket, Dagger, qapply
+from sympy.physics.quantum.qubit import matrix_to_qubit, Qubit
+from sympy.physics.quantum.tensorproduct import TensorProduct
+
+s = sp.Matrix(Statevector.from_label("+01")).applyfunc(partial(sp.nsimplify, constants=[sp.sqrt(2)]))
+m = matrix_to_qubit(s)
+mx = m.expand()
+display(m)
+display(mx)
+def expand_qubits_to_tensor(expr):
+    return expr.subs({
+        Qubit(s): TensorProduct(*[Qubit(bit) for bit in s])
+        for s in [b for b in [bin(i)[2:].zfill(3) for i in range(8)]]})
+t = expand_qubits_to_tensor(m)
+display(t)
+display(TensorProduct.factor(qapply(t)))
+
+#f = sp.gcd(tuple(s))
+#sp.MatMul(f, s/f, evaluate=False)

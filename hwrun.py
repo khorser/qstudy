@@ -13,9 +13,11 @@
 #     name: python3
 # ---
 
-# %%
-from qiskit_ibm_runtime import QiskitRuntimeService
-QiskitRuntimeService.save_account(token="xx")
+# %% [markdown]
+# ```python
+# from qiskit_ibm_runtime import QiskitRuntimeService
+# QiskitRuntimeService.save_account(token="xx")
+# ```
 
 # %%
 from qiskit import QuantumCircuit, transpile, ClassicalRegister, QuantumRegister
