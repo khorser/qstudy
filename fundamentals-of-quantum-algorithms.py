@@ -29,7 +29,7 @@ from qstudy import CircuitSlicer
 qiskitver
 
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # # Entanglement in Action
 
 # %% [markdown]
@@ -241,7 +241,7 @@ def checkCHSHPhase(result, _option):
 CircuitSlicer(CHSH_Phase(), postproc=checkCHSHPhase, nsims=10);
 
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # # Deutsch et al
 
 # %% [markdown]
@@ -307,7 +307,7 @@ class Deutsch:
 CircuitSlicer(Deutsch());
 
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Deutsch-Jozsa
 
 # %%
@@ -372,7 +372,7 @@ class DeutschJozsa:
 # %%
 CircuitSlicer(DeutschJozsa(3));
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Bernstein-Vazirani
 
 # %%
@@ -388,7 +388,7 @@ def BernsteinVazirani(result, option):
 CircuitSlicer(DeutschJozsa(l), postproc=BernsteinVazirani, options=[("BV", bv)], diag=False, common_factors=False);
 
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # # Simon
 
 # %% [markdown]
@@ -654,3 +654,34 @@ plt.axvline(0, color='black', lw=1)
 plt.legend()
 
 plt.show()
+
+# %%
+d = Deutsch()
+from qiskit import QuantumCircuit, transpile, ClassicalRegister, QuantumRegister, AncillaRegister
+from qiskit.transpiler import generate_preset_pass_manager
+from qiskit_ibm_runtime import QiskitRuntimeService
+from qiskit_ibm_runtime import SamplerV2
+
+#service = QiskitRuntimeService()
+#backend = service.least_busy(simulator=False, operational=True)
+#pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+#sampler = SamplerV2(mode=backend)
+
+# %%
+#qc = d.get_circuit(d.f_id)
+#print(qc.draw())
+
+# %%
+#qc = qc.decompose()
+#isa_circuit = pm.run(qc)
+#
+#from qiskit.qasm3 import dumps, loads
+#isa_circuit = loads(dumps(isa_circuit))
+#
+#job = sampler.run([isa_circuit])
+#result = job.result()
+
+# %%
+#pub_result = result[0]
+#for r in pub_result.data.keys():
+#    print(f"{r}: {pub_result.data[r].get_counts()}")

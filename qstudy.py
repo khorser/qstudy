@@ -1,5 +1,5 @@
 from itertools import chain
-from functools import reduce
+from functools import reduce, partial
 from collections import defaultdict
 
 import numpy as np
@@ -8,6 +8,9 @@ import sympy as sp
 from qiskit.quantum_info import Operator, partial_trace, entropy
 from qiskit_aer import AerSimulator
 from qiskit.visualization import array_to_latex, plot_histogram, plot_bloch_multivector, plot_state_paulivec, plot_state_city
+from qiskit.transpiler import generate_preset_pass_manager
+from qiskit_ibm_runtime import QiskitRuntimeService
+from qiskit_ibm_runtime import SamplerV2
 
 import ipywidgets as widgets
 from IPython import get_ipython
@@ -38,9 +41,13 @@ class CircuitSlicer:
         self.option.observe(self.sim, names='value')
         self.step.observe(self.update, names='value')
         self.mult.observe(self.update, names='value')
+        sample = widgets.Button(description="Sample on QPU")
+        sampleQasm = widgets.Button(description="Sample on QPU via QASM")
+        sample.on_click(partial(self.sample_on_qpu, via_qasm=False))
+        sampleQasm.on_click(partial(self.sample_on_qpu, via_qasm=True))
         main = widgets.VBox([widgets.HBox([self.circuit, self.func]),
-                                  widgets.HBox([widgets.HBox([self.matrix, self.state, self.dm], layout=widgets.Layout(width='80%')),
-                                                self.qinfo])])
+                             widgets.HBox([widgets.HBox([self.matrix, self.state, self.dm], layout=widgets.Layout(width='80%')),
+                                           self.qinfo])])
         self.stats = widgets.Output()
         self.svstats = widgets.Output()
         tab = widgets.Tab()
@@ -52,7 +59,9 @@ class CircuitSlicer:
             tab.set_title(2, "Bloch")
             tab.set_title(3, "Pauli")
             tab.set_title(4, "City")
-        self.out = widgets.VBox([widgets.HBox([self.nsims, self.option, self.step, self.mult]), self.status, tab, self.dirac])
+        self.out = widgets.VBox([widgets.HBox([self.nsims, self.option, self.step, self.mult]),
+                                 widgets.HBox([sample, sampleQasm]),
+                                 self.status, tab, self.dirac])
         self.postproc = postproc
         self.stepproc = stepproc
         self.sim()
@@ -62,10 +71,10 @@ class CircuitSlicer:
         return self.qc.find_bit(q).index
 
     def instrument_circuit(self, c):
-        def instrument_label(qc, l):
+        def instrument_label(l):
             self.labels.append(l)
-            qc.save_statevector(label=l)
-            qc.save_density_matrix(live, label=l + ":dm")
+            self.instrumented.save_statevector(label=l)
+            self.instrumented.save_density_matrix(live, label=l + ":dm")
             self.nonms[l] = sorted(live, key=self.qbit_index)
             try:
                 self.ops[l] = Operator(inc)
@@ -75,21 +84,21 @@ class CircuitSlicer:
         self.ops = {}
         self.nonms = {}
         inc = c.copy_empty_like() # incremental circuit
-        new = c.copy_empty_like()
+        self.instrumented = c.copy_empty_like()
         live = set(c.qubits) # non-measured qubits, TODO account for qubits being reset after measurement using density matrix
         self.labels = []
         for i, inst in enumerate(c.data):
             if inst.operation.name == "barrier":
-                instrument_label(new, inst.operation.label)
+                instrument_label(inst.operation.label)
                 inc = c.copy_empty_like()
             else:
-                new.append(inst.operation, inst.qubits, inst.clbits)
+                self.instrumented.append(inst.operation, inst.qubits, inst.clbits)
                 if inst.operation.name != "measure":
                     # TODO invent something more clever in the presense of measurements
                     inc.append(inst.operation, inst.qubits, inst.clbits)
                 else:
                     live -= set(inst.qubits)
-        instrument_label(new, "final")
+        instrument_label("final")
         try:
             self.labels.index(self.step.value)
             newl = self.step.value
@@ -102,21 +111,20 @@ class CircuitSlicer:
                     break
         self.step.options = self.labels
         self.value = newl
-        return new
 
+    def clear_all(self, o):
+        if hasattr(o, 'children'):
+            for w in o.children:
+                if isinstance(w, widgets.Output):
+                    w.clear_output(wait=False)
+                self.clear_all(w)
     def sim(self, change=None):
-        def clear_all(o):
-            if hasattr(o, 'children'):
-                for w in o.children:
-                    if isinstance(w, widgets.Output):
-                        w.clear_output(wait=False)
-                    clear_all(w)
         self.res = None
         with self.status:
             try:
                 self.qc = self.algo.get_circuit(self.option.value, self.option.label)
-                nc = self.instrument_circuit(self.qc)
-                self.res = AerSimulator().run(nc.decompose(), shots=self.nsims.value, memory=True).result()
+                self.instrument_circuit(self.qc)
+                self.res = AerSimulator().run(self.instrumented.decompose(), shots=self.nsims.value, memory=True).result()
                 clear_output(wait=True)
                 def get_clbits(a, x):
                     pos, prev, txt = a
@@ -135,7 +143,7 @@ class CircuitSlicer:
                 if self.postproc is not None:
                     display(self.postproc(self.res, self.option.value))
             except Exception as e:
-                clear_all(self.out)
+                self.clear_all(self.out)
                 get_ipython().showtraceback()
                 return
         with self.circuit:
@@ -218,6 +226,30 @@ class CircuitSlicer:
             with self.city:
                 clear_output(wait=True)
                 display(plot_state_city(sv))
+
+    def sample_on_qpu(self, _b, via_qasm=False):
+        service = QiskitRuntimeService()
+        backend = service.least_busy(simulator=False, operational=True)
+        pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+        sampler = SamplerV2(mode=backend)
+        try:
+            isa_circuit = pm.run(self.qc.decompose())
+            # as of April 2026, runtime deserializer doesn't support ancilla registers (https://github.com/Qiskit/qiskit-ibm-runtime/issues/2429)
+            # using QASM allows to workaround this without rebuilding the circuit
+            if via_qasm:
+                from qiskit.qasm3 import dumps, loads
+                isa_circuit = loads(dumps(isa_circuit)) 
+            job = sampler.run([isa_circuit])
+            result = job.result()[0]
+            with self.status:
+                display(HTML("<b>Sampling results:</b>"))
+                for r in result.data.keys():
+                    from functools import partial
+                    display(HTML(f"<b>{r}</b>: {result.data[r].get_counts()}"))
+        except Exception as e:
+            self.clear_all(self.out)
+            with self.status:
+                get_ipython().showtraceback()
 
 def factor_out(arr, prefix=""):
 # generated with Gemini and Claude
