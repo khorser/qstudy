@@ -32,7 +32,7 @@ qiskitver
 # %% [markdown]
 # # Entanglement in Action
 
-# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# %% [markdown]
 # ## Teleportation
 
 # %%
@@ -198,7 +198,7 @@ class CHSH_Phase:
     def fp16(self):
         return [np.pi/16, -7*np.pi/16]
     def get_options(self):
-        return [("pi/4, -pi/4", self.fp4), ("pi/8, -3*pi/8", self.fp8), ("pi/16, -7*pi/16", self.fp16)]
+        return [("π/4, -π/4", self.fp4), ("π/8, -3*π/8", self.fp8), ("π/16, -7*π/16", self.fp16)]
     def get_circuit(self, f, label=""):
         rnd = QuantumRegister(1, "rnd")
         qa = QuantumRegister(1, "A")
@@ -385,7 +385,7 @@ def bv():
 def BernsteinVazirani(result, option):
     r = result.get_memory()[0]
     return HTML(f"<b>Processing result:</b> s = {int(r, 2)}")
-CircuitSlicer(DeutschJozsa(l), postproc=BernsteinVazirani, options=[("BV", bv)], bloch=False, common_factors=False);
+CircuitSlicer(DeutschJozsa(l), postproc=BernsteinVazirani, options=[("BV", bv)], diag=False, common_factors=False);
 
 
 # %% [markdown]
@@ -478,7 +478,7 @@ def postSimon(result, option):
 #M_gf2.nullspace()
 
 simon = Simon(3, 5)
-res = CircuitSlicer(simon, nsims=3, common_factors=False, bloch=False, postproc=postSimon)
+res = CircuitSlicer(simon, nsims=3, common_factors=False, diag=False, postproc=postSimon)
 
 # %%
 # circuit check
@@ -582,6 +582,8 @@ def make_zf(u):
     c.x(c.qubits[-1])
     c.h(c.qubits[-1])
     c.append(u.to_gate(label=f"$U_{{{u.name}}}$"), c.qubits)
+    c.h(c.qubits[-1])
+    c.x(c.qubits[-1])
     return c
 
 z_or = make_zf(make_or(3))
@@ -601,24 +603,54 @@ for v in range(2**(z_or.num_qubits-1)):
 
 display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
 
+# %% [markdown]
+# Some SymPy experiments
+# ```python
+# from sympy.physics.quantum import Ket, Dagger, qapply
+# from sympy.physics.quantum.qubit import matrix_to_qubit, Qubit
+# from sympy.physics.quantum.tensorproduct import TensorProduct
+#
+# s = sp.Matrix(Statevector.from_label("+01")).applyfunc(partial(sp.nsimplify, constants=[sp.sqrt(2)]))
+# m = matrix_to_qubit(s)
+# mx = m.expand()
+# display(m)
+# display(mx)
+# def expand_qubits_to_tensor(expr):
+#     return expr.subs({
+#         Qubit(s): TensorProduct(*[Qubit(bit) for bit in s])
+#         for s in [b for b in [bin(i)[2:].zfill(3) for i in range(8)]]})
+# t = expand_qubits_to_tensor(m)
+# display(t)
+# display(TensorProduct.factor(qapply(t)))
+#
+# #f = sp.gcd(tuple(s))
+# #sp.MatMul(f, s/f, evaluate=False)
+# ```
+
 # %%
-# some SymPy experiments
-from sympy.physics.quantum import Ket, Dagger, qapply
-from sympy.physics.quantum.qubit import matrix_to_qubit, Qubit
-from sympy.physics.quantum.tensorproduct import TensorProduct
+import matplotlib.pyplot as plt
+angle_deg = 30
+angle_rad = np.radians(angle_deg)
 
-s = sp.Matrix(Statevector.from_label("+01")).applyfunc(partial(sp.nsimplify, constants=[sp.sqrt(2)]))
-m = matrix_to_qubit(s)
-mx = m.expand()
-display(m)
-display(mx)
-def expand_qubits_to_tensor(expr):
-    return expr.subs({
-        Qubit(s): TensorProduct(*[Qubit(bit) for bit in s])
-        for s in [b for b in [bin(i)[2:].zfill(3) for i in range(8)]]})
-t = expand_qubits_to_tensor(m)
-display(t)
-display(TensorProduct.factor(qapply(t)))
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.set_aspect('equal')
+ax.set_xticks([])
+ax.set_yticks([])
 
-#f = sp.gcd(tuple(s))
-#sp.MatMul(f, s/f, evaluate=False)
+ax.text(1.2, 0, r'$x$', fontsize=14, ha='center', va='center')
+ax.text(0, 1.2, r'$y$', fontsize=14, ha='center', va='center')
+
+t = np.linspace(0, 2*np.pi, 100)
+plt.plot(np.cos(t), np.sin(t), linestyle='--', alpha=0.5)
+a = np.linspace(0, angle_rad, 10)
+plt.plot(0.3*np.cos(a), 0.3*np.sin(a), linestyle='-', alpha=0.5)
+
+plt.plot([0, np.cos(angle_rad)], [0, np.sin(angle_rad)], 'r', label=r'Луч $\vec{L}$')
+
+plt.text(0.3, 0.1, r'$\alpha = \frac{\pi}{6}$', fontsize=15, color='red')
+
+plt.axhline(0, color='black', lw=1)
+plt.axvline(0, color='black', lw=1)
+plt.legend()
+
+plt.show()
