@@ -5,19 +5,19 @@ from collections import defaultdict
 import numpy as np
 import sympy as sp
 
+from qiskit import QuantumCircuit
 from qiskit.quantum_info import Operator, partial_trace, entropy
 from qiskit_aer import AerSimulator
 from qiskit.visualization import array_to_latex, plot_histogram, plot_bloch_multivector, plot_state_paulivec, plot_state_city
 from qiskit.transpiler import generate_preset_pass_manager
-from qiskit_ibm_runtime import QiskitRuntimeService
-from qiskit_ibm_runtime import SamplerV2
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
 
 import ipywidgets as widgets
 from IPython import get_ipython
 from IPython.display import clear_output, HTML, Latex, Math
 
 class CircuitSlicer:
-    def __init__(self, algo, nsims=1, options=None, common_factors=True, diag=True, postproc=None, matrix_precision=10, stepproc=None):
+    def __init__(self, algo, nsims=1, options=None, common_factors=True, diag=True, matrix_precision=10, stepproc=None):
         self.algo = algo
         self.matrix_precision = matrix_precision
         if options is None:
@@ -29,9 +29,6 @@ class CircuitSlicer:
         self.status = widgets.Output()
         self.func = widgets.Output(layout=widgets.Layout(width='20%'))
         self.circuit = widgets.Output(layout=widgets.Layout(width='80%'))
-        self.bloch = diag and widgets.Output()
-        self.pauli = diag and widgets.Output()
-        self.city = diag and widgets.Output()
         self.matrix = widgets.Output(layout=widgets.Layout(width='40%'))
         self.state = widgets.Output(layout=widgets.Layout(width='15%'))
         self.dirac = widgets.Output()
@@ -50,19 +47,23 @@ class CircuitSlicer:
                                            self.qinfo])])
         self.stats = widgets.Output()
         self.svstats = widgets.Output()
-        tab = widgets.Tab()
-        tab.children = [main, widgets.HBox([self.svstats, self.stats])]
-        tab.set_title(0, "Main")
-        tab.set_title(1, "Stats")
+        self.tab = widgets.Tab()
+        self.tab.children = [main, widgets.HBox([self.svstats, self.stats])]
+        self.tab.set_title(0, "Main")
+        self.tab.set_title(1, "Stats")
+        self.diag = diag
         if diag:
-            tab.children += (self.bloch, self.pauli, self.city)
-            tab.set_title(2, "Bloch")
-            tab.set_title(3, "Pauli")
-            tab.set_title(4, "City")
+            self.city = widgets.Output()
+            self.tab.children += (widgets.Output(), widgets.Output(), widgets.Output())
+            self.tab.set_title(2, "Bloch")
+            self.tab.set_title(3, "Pauli")
+            self.tab.set_title(4, "City")
+        if stepproc is not None:
+            self.tab.children += (widgets.Output(),)
+            self.tab.set_title(len(self.tab.children)-1, "Step Proc")
         self.out = widgets.VBox([widgets.HBox([self.nsims, self.option, self.step, self.mult]),
                                  widgets.HBox([sample, sampleQasm]),
-                                 self.status, tab, self.dirac])
-        self.postproc = postproc
+                                 self.status, self.tab, self.dirac])
         self.stepproc = stepproc
         self.sim()
         display(self.out)
@@ -113,7 +114,7 @@ class CircuitSlicer:
         self.value = newl
 
     def clear_all(self, o):
-        if hasattr(o, 'children'):
+        if hasattr(o, "children"):
             for w in o.children:
                 if isinstance(w, widgets.Output):
                     w.clear_output(wait=False)
@@ -140,8 +141,8 @@ class CircuitSlicer:
                 _, _, txt = reduce(get_clbits, self.qc.clbits, (0, "", []))
                 display(Latex(f"Classical Registers: ${''.join(chain.from_iterable(reversed(txt)))}$"))
                 display(HTML(f"<b>Measurements: {self.res.get_memory()}</b>"))
-                if self.postproc is not None:
-                    display(self.postproc(self.res, self.option.value))
+                if hasattr(self.algo, "postproc"):
+                    display(self.algo.postproc(self.res, self.option.value))
             except Exception as e:
                 self.clear_all(self.out)
                 get_ipython().showtraceback()
@@ -152,10 +153,14 @@ class CircuitSlicer:
         with self.func:
             clear_output(wait=True)
             print("Option:")
-            try:
-                display(self.option.value().draw("mpl"))
-            except:
-                display(array_to_latex(self.option.value(), precision=3))
+            f = self.option.value()
+            if isinstance(f, QuantumCircuit):
+                display(f.draw("mpl"))
+            elif isinstance(f, tuple):
+                for i in f:
+                    display(i.draw("mpl"))
+            else:
+                display(array_to_latex(f, precision=3))
         with self.stats:
             clear_output(wait=True)
             display(plot_histogram(self.res.get_counts()))
@@ -174,7 +179,7 @@ class CircuitSlicer:
         sv = self.res.data()[l]
         dm = self.res.data()[l + ":dm"]
         if self.stepproc is not None:
-            self.stepproc(self.out, sv, dm)
+            self.stepproc(self.tab.children[-1], sv, dm)
         with self.matrix:
             clear_output(wait=True)
             if self.ops[l] is None:
@@ -214,16 +219,14 @@ class CircuitSlicer:
                     e = entropy(reduced, base=2)
                     if e > 1e-10:
                         print(f"q{i}-q{j}: {e:.3f}")
-        if self.bloch:
-            with self.bloch:
+        if self.diag:
+            with self.tab.children[2]:
                 clear_output(wait=True)
                 display(plot_bloch_multivector(sv))
-        if self.pauli:
-            with self.pauli:
+            with self.tab.children[3]:
                 clear_output(wait=True)
                 display(plot_state_paulivec(sv))
-        if self.city:
-            with self.city:
+            with self.tab.children[4]:
                 clear_output(wait=True)
                 display(plot_state_city(sv))
 

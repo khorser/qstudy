@@ -32,7 +32,7 @@ qiskitver
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
 # # Entanglement in Action
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Teleportation
 
 # %%
@@ -79,7 +79,7 @@ class Teleportation:
 CircuitSlicer(Teleportation(), common_factors=False, matrix_precision=3);
 
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Superdence Coding
 
 # %%
@@ -137,7 +137,7 @@ class Coding:
 CircuitSlicer(Coding());
 
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## CHSH Game
 
 # %%
@@ -176,17 +176,17 @@ class CHSH:
             c.ry(self.bangles[1], qb)
         c.measure(qb, b)
         return c
+    def postproc(self, result, option):
+        def success(t):
+            b, a = t.split(" ")
+            x, y = option()
+            return (a!=b) == int(x)&int(y)
+        c = Counter(map(success, result.get_memory()))
+        return HTML(f"<b>Success count:</b> {c[True]}")
 
 
 # %%
-def checkCHSH(result, option):
-    def success(t):
-        b, a = t.split(" ")
-        x, y = option()
-        return (a!=b) == int(x)&int(y)
-    c = Counter(map(success, result.get_memory()))
-    return HTML(f"<b>Success count:</b> {c[True]}")
-CircuitSlicer(CHSH((-np.pi/2, 0), (np.pi/4, -np.pi/4)), postproc=checkCHSH, nsims=10);
+CircuitSlicer(CHSH((-np.pi/2, 0), (np.pi/4, -np.pi/4)), nsims=10);
 
 
 # %%
@@ -228,17 +228,16 @@ class CHSH_Phase:
             c.ry(f()[1], qb)
         c.measure(qb, b)
         return c
+    def postproc(self, result, option):
+        def success(t):
+            b, a, y, x = t.split(" ")
+            return (a!=b) == int(x)&int(y)
+        c = Counter(map(success, result.get_memory()))
+        return HTML(f"<b>Success count:</b> {c[True]}")
 
 
 # %%
-def checkCHSHPhase(result, _option):
-    def success(t):
-        b, a, y, x = t.split(" ")
-        return (a!=b) == int(x)&int(y)
-    c = Counter(map(success, result.get_memory()))
-    return HTML(f"<b>Success count:</b> {c[True]}")
-
-CircuitSlicer(CHSH_Phase(), postproc=checkCHSHPhase, nsims=10);
+CircuitSlicer(CHSH_Phase(), nsims=10);
 
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
@@ -336,6 +335,7 @@ class DeutschJozsa:
         return c
     def f_random(self):
         c = self.f_0()
+        # generate binary representation for numbers 0..(n-1)
         all_states = (np.arange(2**self.n)[:, None] >> np.arange(self.n)) & 1
         # to ensure balance, take only a half
         on_states_bits = np.random.permutation(all_states)[:2**(self.n-1)]
@@ -372,20 +372,25 @@ class DeutschJozsa:
 # %%
 CircuitSlicer(DeutschJozsa(3));
 
+
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Bernstein-Vazirani
 
 # %%
-x = 95
-l = x.bit_length()
-def bv():
-    c = QuantumCircuit(l+1)
-    c.cx([i for i in range(l) if (x>>i)&1], l)
-    return c
-def BernsteinVazirani(result, option):
-    r = result.get_memory()[0]
-    return HTML(f"<b>Processing result:</b> s = {int(r, 2)}")
-CircuitSlicer(DeutschJozsa(l), postproc=BernsteinVazirani, options=[("BV", bv)], diag=False, common_factors=False);
+class BernsteinVazirani (DeutschJozsa):
+    def __init__(self, x):
+        super().__init__(x.bit_length())
+        self.x = x
+    def bv(self):
+        c = QuantumCircuit(self.n+1)
+        c.cx([i for i in range(self.n) if (self.x>>i)&1], self.n)
+        return c
+    def get_options(self):
+        return [("BV", self.bv)]
+    def postproc(self, result, option):
+        r = result.get_memory()[0]
+        return HTML(f"<b>Processing result:</b> s = {int(r, 2)}")
+CircuitSlicer(BernsteinVazirani(95), diag=False, common_factors=False);
 
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
@@ -448,52 +453,108 @@ class Simon:
         c.barrier(label="done")
         c.measure(x, r)
         return c
+    def postproc(self, result, option):
+        def mod2(x): return x%2
+        def mod2zero(x): return x%2 == 0
+        r = list(map(lambda x: list(reversed(x.split(" ")[1])), result.get_memory()))
+        M = sp.Matrix(r).applyfunc(mod2)
+        # iszerofunc is a HACK here
+        if M.rank(iszerofunc=mod2zero) < self.i-1:
+            return HTML("<font color=red>Not enough executions, better luck next time</font>")
+        else:
+            ns = M.nullspace(iszerofunc=mod2zero)
+            ns = [v.applyfunc(mod2) for v in ns][0]
+            return HTML(f"<b>Postrocessing results:</b> s = {ns.tolist()}")
 
+
+# %% [markdown]
+# Alternative approaches to postprocessing.
+#
+# If you don't mind a package zoo:
+# ```python
+# import galois
+# GF2 = galois.GF(2)
+# ns = GF2(result).null_space()
+# print(ns[0].tolist())
+# ```
+#
+# SymPy returns an error for this, looks like it's not implemented properly yet:
+# ```python
+# from sympy.polys.matrices import DomainMatrix
+# from sympy.polys.domains import GF
+# M_gf2 = DomainMatrix(result, (len(result), len(result[0])), GF(2))
+# M_gf2.nullspace()
+# ```
 
 # %%
-def mod2(x): return x%2
-def mod2zero(x): return x%2 == 0
-
-def postSimon(result, option):
-    r = list(map(lambda x: list(reversed(x.split(" ")[1])), result.get_memory()))
-    M = sp.Matrix(r).applyfunc(mod2)
-    # iszerofunc is a HACK here
-    if M.rank(iszerofunc=mod2zero)<simon.i-1:
-        return HTML("<font color=red>Not enough executions, better luck next time</font>")
-    else:
-        ns = M.nullspace(iszerofunc=mod2zero)
-        ns = [v.applyfunc(mod2) for v in ns][0]
-        return HTML(f"<b>Postrocessing results:</b> s = {ns.tolist()}")
-    #an alternative if you don't mind a package zoo
-    #import galois
-    #GF2 = galois.GF(2)
-    #ns = GF2(result).null_space()
-    #print(ns[0].tolist())
-
-#SymPy returns and error for this
-#from sympy.polys.matrices import DomainMatrix
-#from sympy.polys.domains import GF
-#
-#M_gf2 = DomainMatrix(result, (len(result), len(result[0])), GF(2))
-#M_gf2.nullspace()
-
-simon = Simon(3, 5)
-res = CircuitSlicer(simon, nsims=3, common_factors=False, diag=False, postproc=postSimon)
+res = CircuitSlicer(Simon(3, 5), nsims=3, common_factors=False, diag=False)
 
 # %%
 # circuit check
-op = simon.fixed_ibm_example().to_gate()
+op = Simon(3, 5).fixed_ibm_example().to_gate()
 
+rows = ""
 for i in range(3):
     v = Statevector.from_label(f"{1<<i:08b}")
-    display(HTML(f"""
-<div style="display: flex; flex-direction: row; gap: 20px; align-items: center; overflow-x: auto;">
-    <div>{v.draw('latex').data}</div>
-    <div>$\\longrightarrow$</div>
-    <div>{v.evolve(op).draw("latex").data}</div>
-</div>
-"""))
+    rows += rf"""
+    <tr><td>${v.draw('latex_source')}$</td><td>$\longrightarrow$</td>
+    <td>${v.evolve(op).draw("latex_source")}$</td></tr>"""
+display(HTML(f"<table>{rows}</table>"))
 
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# # Grover
+
+# %%
+class Grover:
+    def opt(self, niter):
+        oracle = QuantumCircuit(self.dim+1)
+        for s, bits in enumerate(self.sols):
+            zeros = np.arange(self.dim)[bits == 0].tolist()
+            if zeros:
+                oracle.x(zeros)
+            oracle.mcx(list(range(self.dim)) , self.dim)
+            if zeros:
+                oracle.x(zeros)
+        diffuser = QuantumCircuit(self.dim+1)
+        #diffuser.h(range(self.dim))
+        diffuser.x(range(self.dim))
+        diffuser.mcx(list(range(self.dim)), self.dim)
+        diffuser.x(range(self.dim+1))
+        #diffuser.h(range(self.dim))
+        return (oracle, diffuser)
+    def get_options(self):
+        # (mis)using partial object to store the number of iterations. opt() ignores its argument
+        return [(f"{i} iterations", partial(self.opt, i)) for i in range(1, self.dim)]
+    def __init__(self, dim, nsol=1):
+        self.dim = dim
+        self.sols = (np.random.choice(2**dim, size=nsol, replace=False)[:, None] >> np.arange(dim)) & 1
+    def get_circuit(self, opt, label=""):
+        x = QuantumRegister(self.dim, "x")
+        y = AncillaRegister(1, "y")
+        r = ClassicalRegister(self.dim, "r")
+        c = QuantumCircuit(x, y, r)
+        c.x(y)
+        c.h([*x, *y])
+        c.barrier(label="init")
+        o, d = opt()
+        og = o.to_gate(label="$U_f$")
+        od = d.to_gate(label="$Z_{OR}$")
+        for i in range(opt.args[0]):
+            c.append(og, [*x, *y])
+            c.barrier(label=f"oracle #{i}")
+            c.append(od, [*x, *y])
+            c.barrier(label=f"diff #{i}")
+        c.measure(x, r)
+        return c
+    def postproc(self, result, options):
+        return HTML("")
+
+CircuitSlicer(Grover(4), 1, diag=False, common_factors=False);
+
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# # Experiments
 
 # %%
 class T:
@@ -510,12 +571,6 @@ class T:
         qc.measure([0, 1], [0, 1])
         return qc
 CircuitSlicer(T());
-
-# %% [markdown]
-# # Grover
-
-# %% [markdown]
-# ## Preliminary Notes
 
 # %%
 import ipywidgets as widgets
@@ -575,8 +630,9 @@ for v in range(2):
     <td>${s.evolve(u_fanout).draw('latex_source')}$</td></tr>"""
 display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
 
-
 # %%
+from IPython.display import clear_output, HTML, Latex, Math
+
 def make_zf(u):
     c = u.copy_empty_like()
     c.x(c.qubits[-1])
@@ -600,7 +656,26 @@ for v in range(2**(z_or.num_qubits-1)):
     rows += fr"""<tr><td>${s.draw('latex_source')}$</td>
     <td>$\longrightarrow$</td><td>${r.draw('latex_source')}$</td>
     <td>:</td><td>${partial_s.draw('latex_source')}$</td></tr>"""
+display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
 
+# %%
+# z_or directly
+d = QuantumCircuit(5)
+d.x(range(4))
+d.mcx(list(range(4)), 4)
+d.x(range(5))
+rows = ""
+l = widgets.Output()
+with l:
+    display(d.draw("mpl"))
+for v in range(2**4):
+    s = Statevector.from_label(f"-{v:04b}")
+    r = s.evolve(d)
+    dm = partial_trace(r, [4])
+    partial_s = dm.to_statevector()
+    rows += fr"""<tr><td>${s.draw('latex_source')}$</td>
+    <td>$\longrightarrow$</td><td>${r.draw('latex_source')}$</td>
+    <td>:</td><td>${partial_s.draw('latex_source')}$</td></tr>"""
 display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
 
 # %% [markdown]
@@ -629,59 +704,34 @@ display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=wid
 
 # %%
 import matplotlib.pyplot as plt
-angle_deg = 30
+import matplotlib.patches as patches
+
+angle_deg = -210
 angle_rad = np.radians(angle_deg)
 
 fig, ax = plt.subplots(figsize=(6, 6))
 ax.set_aspect('equal')
 ax.set_xticks([])
 ax.set_yticks([])
+for spine in ['top', 'right', 'left', 'bottom']:
+    ax.spines[spine].set_visible(False)
 
-ax.text(1.2, 0, r'$x$', fontsize=14, ha='center', va='center')
-ax.text(0, 1.2, r'$y$', fontsize=14, ha='center', va='center')
+plt.axhline(0, color='black', lw=0.5)
+plt.axvline(0, color='black', lw=0.5)
+ax.text(1.15, 0, r'$x$', fontsize=14, ha='center', va='center')
+ax.text(0, 1.15, r'$y$', fontsize=14, ha='center', va='center')
 
-t = np.linspace(0, 2*np.pi, 100)
-plt.plot(np.cos(t), np.sin(t), linestyle='--', alpha=0.5)
-a = np.linspace(0, angle_rad, 10)
-plt.plot(0.3*np.cos(a), 0.3*np.sin(a), linestyle='-', alpha=0.5)
+circle = patches.Circle((0, 0), linestyle='--', alpha=0.5, radius=1, fill=False, color='blue')
+ax.add_patch(circle)
+theta1, theta2 = sorted([0, angle_deg])
+arc = patches.Arc((0, 0), 0.7, 0.7, theta1=theta1, theta2=theta2, edgecolor='orange', linewidth=1)
+ax.add_patch(arc)
+mid_angle_rad = np.radians(angle_deg/2)
+tx = 0.45 * np.cos(mid_angle_rad)
+ty = 0.45 * np.sin(mid_angle_rad)
+ax.text(tx, ty, r'$\alpha$', fontsize=16, color='green', ha='center', va='center')
 
-plt.plot([0, np.cos(angle_rad)], [0, np.sin(angle_rad)], 'r', label=r'Луч $\vec{L}$')
+plt.plot((0, np.cos(angle_rad)), (0, np.sin(angle_rad)), 'r', label=r'Луч $\vec{L}$')
 
-plt.text(0.3, 0.1, r'$\alpha = \frac{\pi}{6}$', fontsize=15, color='red')
-
-plt.axhline(0, color='black', lw=1)
-plt.axvline(0, color='black', lw=1)
 plt.legend()
-
 plt.show()
-
-# %%
-d = Deutsch()
-from qiskit import QuantumCircuit, transpile, ClassicalRegister, QuantumRegister, AncillaRegister
-from qiskit.transpiler import generate_preset_pass_manager
-from qiskit_ibm_runtime import QiskitRuntimeService
-from qiskit_ibm_runtime import SamplerV2
-
-#service = QiskitRuntimeService()
-#backend = service.least_busy(simulator=False, operational=True)
-#pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
-#sampler = SamplerV2(mode=backend)
-
-# %%
-#qc = d.get_circuit(d.f_id)
-#print(qc.draw())
-
-# %%
-#qc = qc.decompose()
-#isa_circuit = pm.run(qc)
-#
-#from qiskit.qasm3 import dumps, loads
-#isa_circuit = loads(dumps(isa_circuit))
-#
-#job = sampler.run([isa_circuit])
-#result = job.result()
-
-# %%
-#pub_result = result[0]
-#for r in pub_result.data.keys():
-#    print(f"{r}: {pub_result.data[r].get_counts()}")
