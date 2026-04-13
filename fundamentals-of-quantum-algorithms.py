@@ -507,7 +507,7 @@ for i in range(3):
 display(HTML(f"<table>{rows}</table>"))
 
 
-# %% [markdown]
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # # Grover
 
 # %%
@@ -552,7 +552,7 @@ class Grover:
         c.barrier(label="init")
         o, d = opt()
         og = o.to_gate(label="$U_f$")
-        od = d.to_gate(label="$Z_{OR}$")
+        od = d.to_gate(label="$H Z_{OR} H$")
         for i in range(opt.args[0]):
             c.append(og, [*x, *y])
             c.barrier(label=f"oracle #{i}")
@@ -618,6 +618,33 @@ class T:
         qc.measure([0, 1], [0, 1])
         return qc
 CircuitSlicer(T());
+
+# %% [markdown]
+# Some SymPy experiments
+# ```python
+# from sympy.physics.quantum import Ket, Dagger, qapply
+# from sympy.physics.quantum.qubit import matrix_to_qubit, Qubit
+# from sympy.physics.quantum.tensorproduct import TensorProduct
+#
+# s = sp.Matrix(Statevector.from_label("+01")).applyfunc(partial(sp.nsimplify, constants=[sp.sqrt(2)]))
+# m = matrix_to_qubit(s)
+# mx = m.expand()
+# display(m)
+# display(mx)
+# def expand_qubits_to_tensor(expr):
+#     return expr.subs({
+#         Qubit(s): TensorProduct(*[Qubit(bit) for bit in s])
+#         for s in [b for b in [bin(i)[2:].zfill(3) for i in range(8)]]})
+# t = expand_qubits_to_tensor(m)
+# display(t)
+# display(TensorProduct.factor(qapply(t)))
+#
+# #f = sp.gcd(tuple(s))
+# #sp.MatMul(f, s/f, evaluate=False)
+# ```
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ## Gates
 
 # %%
 import ipywidgets as widgets
@@ -724,27 +751,3 @@ for v in range(2**4):
     <td>$\longrightarrow$</td><td>${r.draw('latex_source')}$</td>
     <td>:</td><td>${partial_s.draw('latex_source')}$</td></tr>"""
 display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
-
-# %% [markdown]
-# Some SymPy experiments
-# ```python
-# from sympy.physics.quantum import Ket, Dagger, qapply
-# from sympy.physics.quantum.qubit import matrix_to_qubit, Qubit
-# from sympy.physics.quantum.tensorproduct import TensorProduct
-#
-# s = sp.Matrix(Statevector.from_label("+01")).applyfunc(partial(sp.nsimplify, constants=[sp.sqrt(2)]))
-# m = matrix_to_qubit(s)
-# mx = m.expand()
-# display(m)
-# display(mx)
-# def expand_qubits_to_tensor(expr):
-#     return expr.subs({
-#         Qubit(s): TensorProduct(*[Qubit(bit) for bit in s])
-#         for s in [b for b in [bin(i)[2:].zfill(3) for i in range(8)]]})
-# t = expand_qubits_to_tensor(m)
-# display(t)
-# display(TensorProduct.factor(qapply(t)))
-#
-# #f = sp.gcd(tuple(s))
-# #sp.MatMul(f, s/f, evaluate=False)
-# ```
