@@ -5,7 +5,6 @@ from collections import defaultdict
 import numpy as np
 import sympy as sp
 
-from qiskit import QuantumCircuit
 from qiskit.quantum_info import Operator, partial_trace, entropy
 from qiskit_aer import AerSimulator
 from qiskit.visualization import array_to_latex, plot_histogram, plot_bloch_multivector, plot_state_paulivec, plot_state_city
@@ -17,7 +16,7 @@ from IPython import get_ipython
 from IPython.display import clear_output, HTML, Latex, Math
 
 class CircuitSlicer:
-    def __init__(self, algo, nsims=1, options=None, common_factors=True, diag=True, matrix_precision=10, stepproc=None):
+    def __init__(self, algo, nsims=1, options=None, common_factors=True, diag=True, matrix_precision=10):
         self.algo = algo
         self.matrix_precision = matrix_precision
         if options is None:
@@ -58,13 +57,12 @@ class CircuitSlicer:
             self.tab.set_title(2, "Bloch")
             self.tab.set_title(3, "Pauli")
             self.tab.set_title(4, "City")
-        if stepproc is not None:
+        if hasattr(self.algo, "stepproc"):
             self.tab.children += (widgets.Output(),)
             self.tab.set_title(len(self.tab.children)-1, "Step Proc")
         self.out = widgets.VBox([widgets.HBox([self.nsims, self.option, self.step, self.mult]),
                                  widgets.HBox([sample, sampleQasm]),
                                  self.status, self.tab, self.dirac])
-        self.stepproc = stepproc
         self.sim()
         display(self.out)
 
@@ -154,7 +152,7 @@ class CircuitSlicer:
             clear_output(wait=True)
             print("Option:")
             f = self.option.value()
-            if isinstance(f, QuantumCircuit):
+            if hasattr(f, "draw"):
                 display(f.draw("mpl"))
             elif isinstance(f, tuple):
                 for i in f:
@@ -178,8 +176,10 @@ class CircuitSlicer:
         l = self.step.value
         sv = self.res.data()[l]
         dm = self.res.data()[l + ":dm"]
-        if self.stepproc is not None:
-            self.stepproc(self.tab.children[-1], sv, dm)
+        if hasattr(self.algo, "stepproc"):
+            with self.tab.children[-1]:
+                clear_output(wait=True)
+                display(self.algo.stepproc(sv, dm))
         with self.matrix:
             clear_output(wait=True)
             if self.ops[l] is None:

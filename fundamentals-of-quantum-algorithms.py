@@ -16,14 +16,19 @@
 # %%
 from collections import Counter
 from functools import partial
+
 from qiskit import QuantumRegister, ClassicalRegister, AncillaRegister, QuantumCircuit, __version__ as qiskitver
 from qiskit.quantum_info import Statevector, partial_trace
 from qiskit.circuit.library import UnitaryGate, UGate
 from qiskit.visualization import array_to_latex
+
 import numpy as np
 import sympy as sp
 
 from IPython.display import HTML, Latex
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 from qstudy import CircuitSlicer
 qiskitver
@@ -502,14 +507,14 @@ for i in range(3):
 display(HTML(f"<table>{rows}</table>"))
 
 
-# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# %% [markdown]
 # # Grover
 
 # %%
 class Grover:
     def opt(self, niter):
         oracle = QuantumCircuit(self.dim+1)
-        for s, bits in enumerate(self.sols):
+        for bits in self.sols:
             zeros = np.arange(self.dim)[bits == 0].tolist()
             if zeros:
                 oracle.x(zeros)
@@ -517,18 +522,23 @@ class Grover:
             if zeros:
                 oracle.x(zeros)
         diffuser = QuantumCircuit(self.dim+1)
-        #diffuser.h(range(self.dim))
+        diffuser.h(range(self.dim))
         diffuser.x(range(self.dim))
         diffuser.mcx(list(range(self.dim)), self.dim)
         diffuser.x(range(self.dim+1))
-        #diffuser.h(range(self.dim))
+        diffuser.h(range(self.dim))
         return (oracle, diffuser)
     def get_options(self):
         # (mis)using partial object to store the number of iterations. opt() ignores its argument
-        return [(f"{i} iterations", partial(self.opt, i)) for i in range(1, self.dim)]
+        return [(f"{i} iterations", partial(self.opt, i)) for i in range(1, 2**(self.dim-1))]
     def __init__(self, dim, nsol=1):
         self.dim = dim
-        self.sols = (np.random.choice(2**dim, size=nsol, replace=False)[:, None] >> np.arange(dim)) & 1
+        sols = np.random.choice(2**dim, size=nsol, replace=False)
+        a = (np.arange(2**dim)[:,None] >> np.arange(dim))&1
+        self.sols = a[sols]
+        allstates = np.apply_along_axis(lambda x: Statevector.from_label("".join(reversed(x))), 1, a.astype(str))
+        self.a0 = sum(allstates[sols])/np.sqrt(nsol)
+        self.a1 = sum(np.delete(allstates, sols, axis=0))/np.sqrt(2**dim-nsol)
     def get_circuit(self, opt, label=""):
         x = QuantumRegister(self.dim, "x")
         y = AncillaRegister(1, "y")
@@ -548,9 +558,49 @@ class Grover:
         c.measure(x, r)
         return c
     def postproc(self, result, options):
-        return HTML("")
+        return HTML(f"<b>To guess</b>: {self.sols}")
+    def stepproc(self, sv, dm):
+        current_backend = mpl.get_backend()
+        mpl.use('Agg')
 
-CircuitSlicer(Grover(4), 1, diag=False, common_factors=False);
+        partial_sv = partial_trace(sv, [self.dim]).to_statevector()
+        x = (partial_sv.inner(self.a0)).real
+        y = (partial_sv.inner(self.a1)).real
+        angle = np.arctan2(y, x)
+
+        plt.close("all")
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.set_aspect("equal")
+        ax.set_xlim(-1.3, 1.3)
+        ax.set_ylim(-1.3, 1.3)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ["top", "right", "left", "bottom"]:
+            ax.spines[spine].set_visible(False)
+
+        ax.axhline(0, color="black", lw=0.5)
+        ax.axvline(0, color="black", lw=0.5)
+        ax.text(1.2, 0.1, r"$\vert A_0\rangle$", fontsize=12, ha="center", va="center")
+        ax.text(0.15, 1.2, r"$\vert A_1\rangle$", fontsize=12, ha="center", va="center")
+
+        circle = patches.Circle((0, 0), linestyle='--', alpha=0.5, radius=1, fill=False, color="blue")
+        ax.add_patch(circle)
+        theta1, theta2 = sorted([0, angle])
+        arc = patches.Arc((0, 0), 0.7, 0.7, theta1=theta1, theta2=theta2, edgecolor="orange", linewidth=1)
+
+        ax.add_patch(arc)
+        tx = 0.45 * np.cos(angle/2)
+        ty = 0.45 * np.sin(angle/2)
+        ax.text(tx, ty, r"$\alpha$", fontsize=16, color="green", ha="center", va="center")
+
+        ax.plot((0, x), (0, y), "r", label=r"Луч $\vec{L}$")
+        ax.legend(loc="upper right")
+
+        fig.canvas.draw()
+        mpl.use(current_backend)
+        return fig
+
+CircuitSlicer(Grover(6, 1), 1, diag=False, common_factors=False);
 
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
@@ -701,37 +751,3 @@ display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=wid
 # #f = sp.gcd(tuple(s))
 # #sp.MatMul(f, s/f, evaluate=False)
 # ```
-
-# %%
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-
-angle_deg = -210
-angle_rad = np.radians(angle_deg)
-
-fig, ax = plt.subplots(figsize=(6, 6))
-ax.set_aspect('equal')
-ax.set_xticks([])
-ax.set_yticks([])
-for spine in ['top', 'right', 'left', 'bottom']:
-    ax.spines[spine].set_visible(False)
-
-plt.axhline(0, color='black', lw=0.5)
-plt.axvline(0, color='black', lw=0.5)
-ax.text(1.15, 0, r'$x$', fontsize=14, ha='center', va='center')
-ax.text(0, 1.15, r'$y$', fontsize=14, ha='center', va='center')
-
-circle = patches.Circle((0, 0), linestyle='--', alpha=0.5, radius=1, fill=False, color='blue')
-ax.add_patch(circle)
-theta1, theta2 = sorted([0, angle_deg])
-arc = patches.Arc((0, 0), 0.7, 0.7, theta1=theta1, theta2=theta2, edgecolor='orange', linewidth=1)
-ax.add_patch(arc)
-mid_angle_rad = np.radians(angle_deg/2)
-tx = 0.45 * np.cos(mid_angle_rad)
-ty = 0.45 * np.sin(mid_angle_rad)
-ax.text(tx, ty, r'$\alpha$', fontsize=16, color='green', ha='center', va='center')
-
-plt.plot((0, np.cos(angle_rad)), (0, np.sin(angle_rad)), 'r', label=r'Луч $\vec{L}$')
-
-plt.legend()
-plt.show()
