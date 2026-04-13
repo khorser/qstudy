@@ -537,8 +537,11 @@ class Grover:
         a = (np.arange(2**dim)[:,None] >> np.arange(dim))&1
         self.sols = a[sols]
         allstates = np.apply_along_axis(lambda x: Statevector.from_label("".join(reversed(x))), 1, a.astype(str))
+        u = sum(allstates)/np.sqrt(2**dim)
         self.a0 = sum(allstates[sols])/np.sqrt(nsol)
         self.a1 = sum(np.delete(allstates, sols, axis=0))/np.sqrt(2**dim-nsol)
+        self.ux = np.vdot(u, self.a0).real
+        self.uy = np.vdot(u, self.a1).real
     def get_circuit(self, opt, label=""):
         x = QuantumRegister(self.dim, "x")
         y = AncillaRegister(1, "y")
@@ -564,9 +567,8 @@ class Grover:
         mpl.use('Agg')
 
         partial_sv = partial_trace(sv, [self.dim]).to_statevector()
-        x = (partial_sv.inner(self.a0)).real
-        y = (partial_sv.inner(self.a1)).real
-        angle = np.arctan2(y, x)
+        x = partial_sv.inner(self.a0).real
+        y = partial_sv.inner(self.a1).real
 
         plt.close("all")
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -585,16 +587,11 @@ class Grover:
 
         circle = patches.Circle((0, 0), linestyle='--', alpha=0.5, radius=1, fill=False, color="blue")
         ax.add_patch(circle)
-        theta1, theta2 = sorted([0, angle])
-        arc = patches.Arc((0, 0), 0.7, 0.7, theta1=theta1, theta2=theta2, edgecolor="orange", linewidth=1)
+        ax.plot((0, self.ux), (0, self.uy), "g")
+        ax.text(self.ux*1.1, self.uy*1.1, r"$\vert u\rangle$", fontsize=12, ha="center", va="center")
 
-        ax.add_patch(arc)
-        tx = 0.45 * np.cos(angle/2)
-        ty = 0.45 * np.sin(angle/2)
-        ax.text(tx, ty, r"$\alpha$", fontsize=16, color="green", ha="center", va="center")
-
-        ax.plot((0, x), (0, y), "r", label=r"Луч $\vec{L}$")
-        ax.legend(loc="upper right")
+        ax.plot((0, x), (0, y), "r")
+        ax.text(x*1.1, y*1.1, r"$\vert \psi\rangle$", fontsize=12, ha="center", va="center")
 
         fig.canvas.draw()
         mpl.use(current_backend)
