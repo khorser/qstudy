@@ -26,9 +26,8 @@ import numpy as np
 import sympy as sp
 
 from IPython.display import HTML, Latex
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.figure import Figure
 
 from qstudy import CircuitSlicer
 qiskitver
@@ -563,15 +562,12 @@ class Grover:
     def postproc(self, result, options):
         return HTML(f"<b>To guess</b>: {self.sols}")
     def stepproc(self, sv, dm):
-        current_backend = mpl.get_backend()
-        mpl.use('Agg')
-
         partial_sv = partial_trace(sv, [self.dim]).to_statevector()
         x = partial_sv.inner(self.a0).real
         y = partial_sv.inner(self.a1).real
 
-        plt.close("all")
-        fig, ax = plt.subplots(figsize=(6, 6))
+        fig = Figure(figsize=(6, 6))
+        ax = fig.add_subplot(111)
         ax.set_aspect("equal")
         ax.set_xlim(-1.3, 1.3)
         ax.set_ylim(-1.3, 1.3)
@@ -594,14 +590,13 @@ class Grover:
         ax.text(x*1.1, y*1.1, r"$\vert \psi\rangle$", fontsize=12, ha="center", va="center")
 
         fig.canvas.draw()
-        mpl.use(current_backend)
         return fig
 
 CircuitSlicer(Grover(6, 1), 1, diag=False, common_factors=False);
 
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
-# # Experiments
+# # Playground        
 
 # %%
 class T:
@@ -751,3 +746,6 @@ for v in range(2**4):
     <td>$\longrightarrow$</td><td>${r.draw('latex_source')}$</td>
     <td>:</td><td>${partial_s.draw('latex_source')}$</td></tr>"""
 display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
+
+# %% [markdown]
+# ## Phase Estimation
