@@ -18,8 +18,8 @@ from collections import Counter
 from functools import partial
 
 from qiskit import QuantumRegister, ClassicalRegister, AncillaRegister, QuantumCircuit, __version__ as qiskitver
-from qiskit.quantum_info import Statevector, partial_trace
-from qiskit.circuit.library import UnitaryGate, UGate
+from qiskit.quantum_info import Statevector, partial_trace, Operator
+from qiskit.circuit.library import UnitaryGate, UGate, RYGate
 from qiskit.visualization import array_to_latex
 
 import numpy as np
@@ -806,22 +806,45 @@ display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=wid
 
 # %%
 class Phase:
-    def yphase(self, a):
+    def yphase(self, _n, a):
         c = QuantumCircuit(1)
         c.ry(2.0*a, 0)
         return c
+    def yplus(self, _n):
+        c = QuantumCircuit(1)
+        c.h(0)
+        c.s(0)
+        return c
+    def yminus(self, _n):
+        c = QuantumCircuit(1)
+        c.h(0)
+        c.sdg(0)
+        return c
     def get_options(self):
-        return [("5π/8", partial(self.yphase, 5*np.pi/8)),
-                ("3π/8", partial(self.yphase, 3*np.pi/8)),
-                ("π/4", partial(self.yphase, np.pi/4)),
-                ("3π/4", partial(self.yphase, 3*np.pi/4))]
+        # misusing partial again
+        return [("0: CH", partial(self.yphase, 0, 0)),
+                ("5π/8: CH", partial(self.yphase, 0, 5*np.pi/8)),
+                ("3π/8: CH", partial(self.yphase, 0, 3*np.pi/8)),
+                ("π/8: CH", partial(self.yphase, 0, np.pi/8)),
+                ("π/4 CH", partial(self.yphase, 0, np.pi/4)),
+                ("3π/4 CH", partial(self.yphase, 3*np.pi/4, 0)),
+                ("0: CRy(π/6)", partial(self.yphase, 1, 0)),
+                ("y+: CRy(π/6)", partial(self.yplus, 1)),
+                ("y-: CRy(π/6)", partial(self.yminus, 1)),
+                ("0: CRy(π/3)", partial(self.yphase, 2, 0)),
+                ("y+: CRy(π/3)", partial(self.yplus, 2)),
+                ("y-: CRy(π/3)", partial(self.yminus, 2))]
     def get_circuit(self, opt, label=""):
         qc = QuantumCircuit(2, 1)
-        qc.append(opt().to_gate(label="R"), [1])
+        qc.append(opt().to_gate(label="Init"), [1])
         qc.barrier(label="init")
         qc.h(0)
         qc.barrier(label="prep")
-        qc.ch(0, 1)
+        if not opt.args[0]:
+            qc.ch(0, 1)
+        else:
+            for i in range(opt.args[0]):
+                qc.cry(np.pi/6, 0, 1)
         qc.h(0)
         qc.barrier(label="done")
         qc.measure(0, 0)
