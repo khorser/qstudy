@@ -19,7 +19,7 @@ from functools import partial
 
 from qiskit import QuantumRegister, ClassicalRegister, AncillaRegister, QuantumCircuit, __version__ as qiskitver
 from qiskit.quantum_info import Statevector, partial_trace, Operator
-from qiskit.circuit.library import UnitaryGate, UGate, RYGate
+from qiskit.circuit.library import UnitaryGate, UGate, RYGate, QFT
 from qiskit.visualization import array_to_latex
 
 import numpy as np
@@ -805,52 +805,62 @@ display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=wid
 # ## Phase Estimation
 
 # %%
-class Phase:
-    def yphase(self, _n, a):
+class HadamardPhase:
+    def yphase(self, a):
         c = QuantumCircuit(1)
         c.ry(2.0*a, 0)
         return c
-    def yplus(self, _n):
-        c = QuantumCircuit(1)
-        c.h(0)
-        c.s(0)
-        return c
-    def yminus(self, _n):
-        c = QuantumCircuit(1)
-        c.h(0)
-        c.sdg(0)
-        return c
     def get_options(self):
-        # misusing partial again
-        return [("0: CH", partial(self.yphase, 0, 0)),
-                ("5π/8: CH", partial(self.yphase, 0, 5*np.pi/8)),
-                ("3π/8: CH", partial(self.yphase, 0, 3*np.pi/8)),
-                ("π/8: CH", partial(self.yphase, 0, np.pi/8)),
-                ("π/4 CH", partial(self.yphase, 0, np.pi/4)),
-                ("3π/4 CH", partial(self.yphase, 3*np.pi/4, 0)),
-                ("0: CRy(π/6)", partial(self.yphase, 1, 0)),
-                ("y+: CRy(π/6)", partial(self.yplus, 1)),
-                ("y-: CRy(π/6)", partial(self.yminus, 1)),
-                ("0: CRy(π/3)", partial(self.yphase, 2, 0)),
-                ("y+: CRy(π/3)", partial(self.yplus, 2)),
-                ("y-: CRy(π/3)", partial(self.yminus, 2))]
+        return [("0", partial(self.yphase, 0)),
+                ("5π/8", partial(self.yphase, 5*np.pi/8)),
+                ("3π/8", partial(self.yphase, 3*np.pi/8)),
+                ("π/8", partial(self.yphase, np.pi/8)),
+                ("π/4", partial(self.yphase, np.pi/4)),
+                ("3π/4", partial(self.yphase, 3*np.pi/4))]
     def get_circuit(self, opt, label=""):
         qc = QuantumCircuit(2, 1)
         qc.append(opt().to_gate(label="Init"), [1])
         qc.barrier(label="init")
         qc.h(0)
         qc.barrier(label="prep")
-        if not opt.args[0]:
-            qc.ch(0, 1)
-        else:
-            for i in range(opt.args[0]):
-                qc.cry(np.pi/6, 0, 1)
+        qc.ch(0, 1)
         qc.h(0)
         qc.barrier(label="done")
         qc.measure(0, 0)
         return qc
 
-CircuitSlicer(Phase(), 5, common_factors=False);
+CircuitSlicer(HadamardPhase(), 5, common_factors=False);
+
+
+# %%
+class PPhase:
+    def yphase(self, a):
+        c = QuantumCircuit(1)
+        c.x(0)
+        c.ry(a, 0)
+        return c
+    def get_options(self):
+        return [("1", partial(self.yphase, 0)),
+                ("+", partial(self.yphase, np.pi/2))]
+    def get_circuit(self, opt, label=""):
+        ctrl = QuantumRegister(3, "c")
+        x = QuantumRegister(1, "x")
+        m = ClassicalRegister(3, "m")
+        qc = QuantumCircuit(ctrl, x, m)
+        qc.append(opt().to_gate(label="Init"), x)
+        qc.barrier(label="init")
+        qc.h(ctrl)
+        qc.barrier(label="prep")
+        phase = np.pi/4 # T
+        qc.cp(phase, 0, x)
+        qc.cp(phase, [1]*2, x)
+        qc.cp(phase, [2]*4, x)
+        qc.barrier(label="apply")
+        qc.append(QFT(3, inverse=True, do_swaps=True), ctrl)
+        qc.measure(ctrl, m)
+        return qc
+
+CircuitSlicer(PPhase(), 16, common_factors=False, decomp=2);
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Original Deutsch

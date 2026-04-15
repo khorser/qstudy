@@ -16,8 +16,9 @@ from IPython import get_ipython
 from IPython.display import clear_output, HTML, Latex, Math
 
 class CircuitSlicer:
-    def __init__(self, algo, nsims=1, options=None, common_factors=True, diag=True, matrix_precision=10):
+    def __init__(self, algo, nsims=1, options=None, common_factors=True, diag=True, matrix_precision=10, decomp=1):
         self.algo = algo
+        self.decomp = decomp
         self.matrix_precision = matrix_precision
         if options is None:
             options = algo.get_options()
@@ -123,7 +124,7 @@ class CircuitSlicer:
             try:
                 self.qc = self.algo.get_circuit(self.option.value, self.option.label)
                 self.instrument_circuit(self.qc)
-                self.res = AerSimulator().run(self.instrumented.decompose(), shots=self.nsims.value, memory=True).result()
+                self.res = AerSimulator().run(self.instrumented.decompose(reps=self.decomp), shots=self.nsims.value, memory=True).result()
                 clear_output(wait=True)
                 def get_clbits(a, x):
                     pos, prev, txt = a
@@ -236,7 +237,7 @@ class CircuitSlicer:
         pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
         sampler = SamplerV2(mode=backend)
         try:
-            isa_circuit = pm.run(self.qc.decompose())
+            isa_circuit = pm.run(self.qc.decompose(reps=self.decomp))
             # as of April 2026, runtime deserializer doesn't support ancilla registers (https://github.com/Qiskit/qiskit-ibm-runtime/issues/2429)
             # using QASM allows to workaround this without rebuilding the circuit
             if via_qasm:
