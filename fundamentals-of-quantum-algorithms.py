@@ -287,16 +287,18 @@ class Deutsch:
         return c
     def get_options(self):
         return [("0", self.f_0), ("id", self.f_id), ("not", self.f_not), ("1", self.f_1)]
-    # if you know what are you doing you can pass any function here
+    def __init__(self, phasekickback=True):
+        self.phasekickback = phasekickback
     def get_circuit(self, f, label=""):
         x = QuantumRegister(1, name="x")
         y = AncillaRegister(1, name="y")
         r = ClassicalRegister(1, name="r")
         c = QuantumCircuit(x, y, r)
-        c.x(y)
-        c.barrier(label="init")
+        if self.phasekickback:
+            c.x(y)
+            c.barrier(label="init")
+            c.h(y)
         c.h(x)
-        c.h(y)
         c.barrier(label="prep")
         c.append(f().to_gate(label=f"$U_{{{label}}}$"), [x, y])
         c.barrier(label="apply")
@@ -305,8 +307,6 @@ class Deutsch:
         c.measure(x, r)
         return c
 
-
-# %%
 CircuitSlicer(Deutsch());
 
 
@@ -351,10 +351,22 @@ class DeutschJozsa:
             if zeros:
                 c.x(zeros)
         return c
+    def f_halfbalanced(self): #NON-PROMISE!
+        c = self.f_0()
+        all_states = (np.arange(2**self.n)[:, None] >> np.arange(self.n)) & 1
+        on_states_bits = np.random.permutation(all_states)[:2**(self.n-2)]
+        for bits in on_states_bits:
+            zeros = np.arange(self.n)[bits == 0].tolist()
+            if zeros:
+                c.x(zeros)
+            c.mcx(list(range(self.n)), self.n)
+            if zeros:
+                c.x(zeros)
+        return c
     def get_options(self):
         return [("0", self.f_0), ("xor", self.f_xor), ("0:not", self.f_not0th), ("0:id, 1:not", self.f_i0n1),
-                ("1", self.f_1), ("random balanced", self.f_random)]
-    # if you know what are you doing you can pass any function here
+                ("1", self.f_1), ("random balanced", self.f_random), ("half balanced", self.f_halfbalanced)]
+    # if you know what are you doing you can pass a custom function f here
     def get_circuit(self, f, label=""):
         x = QuantumRegister(self.n, name="x")
         y = AncillaRegister(1, name="y")
@@ -372,8 +384,6 @@ class DeutschJozsa:
         c.measure(x, r)
         return c
 
-
-# %%
 CircuitSlicer(DeutschJozsa(3));
 
 
@@ -427,30 +437,29 @@ CircuitSlicer(BernsteinVazirani(95), diag=False, common_factors=False);
 
 # %%
 class Simon:
-    def __init__(self, i, o):
+    def __init__(self, i, o, a=0):
         self.i = i
         self.o = o
-
+        self.a = a
+    # works only for $\sigma^3 \rightarrow \sigma^5$
     def fixed_ibm_example(self):
         c = QuantumCircuit(8)
         c.cx(0, [3, 4, 6])
         c.cx(1, [5, 7])
         c.cx(2, [5, 7])
         return c
-
     def get_options(self):
         return [("ibm", self.fixed_ibm_example)]
-
     def get_circuit(self, f, label=""):
         x = QuantumRegister(self.i, name="x")
-        y = AncillaRegister(self.o, name="y")
+        y = QuantumRegister(self.o, name="y")
+        a = [AncillaRegister(self.a, name="a")] if self.a > 0 else []
         r = ClassicalRegister(self.i, name="r")
         tmp = ClassicalRegister(self.o, name="t")
-        c = QuantumCircuit(x, y, r, tmp)
-        c.barrier(label="init")
+        c = QuantumCircuit(x, y, r, *a, tmp)
         c.h(x)
         c.barrier(label="prep")
-        c.append(f().to_gate(label=f"$U_{{{label}}}$"), [*x, *y])
+        c.append(f().to_gate(label=f"$U_{{{label}}}$"), [*x, *y, *a])
         c.barrier(label="apply")
         c.measure(y, tmp) # COLLAPSE
         c.h(x)
@@ -470,6 +479,7 @@ class Simon:
             ns = [v.applyfunc(mod2) for v in ns][0]
             return HTML(f"<b>Postrocessing results:</b> s = {ns.tolist()}")
 
+CircuitSlicer(Simon(3, 5), nsims=3, common_factors=False, diag=False);
 
 # %% [markdown]
 # Alternative approaches to postprocessing.
@@ -491,9 +501,6 @@ class Simon:
 # ```
 
 # %%
-res = CircuitSlicer(Simon(3, 5), nsims=3, common_factors=False, diag=False)
-
-# %%
 # circuit check
 op = Simon(3, 5).fixed_ibm_example().to_gate()
 
@@ -511,6 +518,17 @@ display(HTML(f"<table>{rows}</table>"))
 
 # %%
 class Grover:
+    def __init__(self, dim, nsol=1):
+        self.dim = dim
+        sols = np.random.choice(2**dim, size=nsol, replace=False)
+        a = (np.arange(2**dim)[:,None] >> np.arange(dim))&1
+        self.sols = a[sols]
+        allstates = np.apply_along_axis(lambda x: Statevector.from_label("".join(reversed(x))), 1, a.astype(str))
+        u = sum(allstates)/np.sqrt(2**dim)
+        self.a1 = sum(allstates[sols])/np.sqrt(nsol)
+        self.a0 = sum(np.delete(allstates, sols, axis=0))/np.sqrt(2**dim-nsol)
+        self.ux = np.vdot(u, self.a0).real
+        self.uy = np.vdot(u, self.a1).real
     def opt(self, niter):
         oracle = QuantumCircuit(self.dim+1)
         for bits in self.sols:
@@ -530,17 +548,6 @@ class Grover:
     def get_options(self):
         # (mis)using partial object to store the number of iterations. opt() ignores its argument
         return [(f"{i} iterations", partial(self.opt, i)) for i in range(1, 2**(self.dim-1))]
-    def __init__(self, dim, nsol=1):
-        self.dim = dim
-        sols = np.random.choice(2**dim, size=nsol, replace=False)
-        a = (np.arange(2**dim)[:,None] >> np.arange(dim))&1
-        self.sols = a[sols]
-        allstates = np.apply_along_axis(lambda x: Statevector.from_label("".join(reversed(x))), 1, a.astype(str))
-        u = sum(allstates)/np.sqrt(2**dim)
-        self.a0 = sum(allstates[sols])/np.sqrt(nsol)
-        self.a1 = sum(np.delete(allstates, sols, axis=0))/np.sqrt(2**dim-nsol)
-        self.ux = np.vdot(u, self.a0).real
-        self.uy = np.vdot(u, self.a1).real
     def get_circuit(self, opt, label=""):
         x = QuantumRegister(self.dim, "x")
         y = AncillaRegister(1, "y")
@@ -613,6 +620,28 @@ class T:
         qc.measure([0, 1], [0, 1])
         return qc
 CircuitSlicer(T());
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ## SimPy
+
+# %%
+A0, A1, N, n, u, a0, a1 = sp.symbols('A0 A1 N n u a0 a1')
+G = sp.Function('G')
+mainrules = {
+    #G(x+y): G(x) + G(y),
+    G(A0): (a0-a1)/N*A0 + 2*sp.sqrt(a0*a1)/N*A1,
+    G(A1): -2*sp.sqrt(a0*a1)/N*A0 + 2*(a0-a1)/N*A1,
+    u: sp.sqrt(a0/N)*A0 + sp.sqrt(a1/N)*A1,
+    N: 2**n
+}
+
+qrules = {
+    a1: 2**(n-2),
+    a0: N - a1
+}
+
+s1 = G(u).subs(mainrules).subs(qrules).subs(mainrules).simplify()
+#G(s1).subs(mainrules)
 
 # %% [markdown]
 # Some SymPy experiments
@@ -747,5 +776,114 @@ for v in range(2**4):
     <td>:</td><td>${partial_s.draw('latex_source')}$</td></tr>"""
 display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
 
-# %% [markdown]
+# %%
+# z_or without an ancilla but with a global phase of pi, should be ok for Grover
+n = 4
+zz = QuantumCircuit(n)
+zz.x(range(n))
+zz.barrier()
+# multi-controlled Z = H MCX H
+zz.h(n-1)
+zz.mcx(list(range(n-1)), n-1)
+zz.h(n-1)
+zz.barrier()
+zz.x(range(n))
+
+rows = ""
+l = widgets.Output()
+with l:
+    display(zz.draw("mpl"))
+for v in range(2**n):
+    s = Statevector.from_label(f"{v:0{n}b}")
+    r = s.evolve(zz)
+    rows += fr"""<tr><td>${s.draw('latex_source')}$</td>
+    <td>$\longrightarrow$</td><td>${r.draw('latex_source')}$</td></tr>"""
+display(widgets.HBox([l, widgets.HTMLMath(f"<table>{rows}</table>")], layout=widgets.Layout(align_items='center')))
+
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Phase Estimation
+
+# %%
+class Phase:
+    def yphase(self, a):
+        c = QuantumCircuit(1)
+        c.ry(2.0*a, 0)
+        return c
+    def get_options(self):
+        return [("5π/8", partial(self.yphase, 5*np.pi/8)),
+                ("3π/8", partial(self.yphase, 3*np.pi/8)),
+                ("π/4", partial(self.yphase, np.pi/4)),
+                ("3π/4", partial(self.yphase, 3*np.pi/4))]
+    def get_circuit(self, opt, label=""):
+        qc = QuantumCircuit(2, 1)
+        qc.append(opt().to_gate(label="R"), [1])
+        qc.barrier(label="init")
+        qc.h(0)
+        qc.barrier(label="prep")
+        qc.ch(0, 1)
+        qc.h(0)
+        qc.barrier(label="done")
+        qc.measure(0, 0)
+        return qc
+
+CircuitSlicer(Phase(), 5, common_factors=False);
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ## Original Deutsch
+
+# %%
+CircuitSlicer(Deutsch(False));
+
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ## Non-promise Simon
+
+# %%
+# 0^n for x s = 0
+# s otherwise
+def non_promise1(i):
+    # 0101...
+    s = np.tile(np.array([0, 1]), int(i / 2))
+    nonzero = s.nonzero()[0]
+    c = QuantumCircuit(i+i+1)
+    c.cx(nonzero, c.num_qubits-1)
+    c.cx(c.num_qubits-1, nonzero+i)
+    c.cx(nonzero, c.num_qubits-1) # uncompute
+    return c
+def non_promise2(i):
+    # 0111...
+    s = np.array([0] + [1]*(i-1))
+    nonzero = s.nonzero()[0]
+    c = QuantumCircuit(i+i+1)
+    c.cx(nonzero, c.num_qubits-1)
+    c.cx(c.num_qubits-1, nonzero+i)
+    c.cx(nonzero, c.num_qubits-1)
+    return c
+CircuitSlicer(Simon(4, 4, 1), nsims=32, options=[("0101...", partial(non_promise1, 4)),
+                                                ("0111...", partial(non_promise2, 4))],
+              common_factors=False, diag=False);
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ## Balanced Grover
+
+# %%
+balancedGrover = Grover(6, 2**(6-1))
+CircuitSlicer(balancedGrover, 1, diag=False, common_factors=False);
+
+# %%
+# diffuser check
+_, diff = balancedGrover.opt(1)
+a0d = Statevector.from_label("-").tensor(Statevector(balancedGrover.a0)).evolve(diff)
+f0 = partial_trace(a0d, [diff.num_qubits-1]).to_statevector()
+print(np.round(f0 - balancedGrover.a1, 10)) # A0 -> A1
+
+a1d = Statevector.from_label("-").tensor(Statevector(balancedGrover.a1)).evolve(diff)
+f1 = partial_trace(a1d, [diff.num_qubits-1]).to_statevector()
+print(np.round(f1 - balancedGrover.a0, 10)) # A1 -> A0
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ## Quarter Grover
+
+# %%
+CircuitSlicer(Grover(6, 16), 4, diag=False, common_factors=False);
