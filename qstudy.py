@@ -47,17 +47,15 @@ class CircuitSlicer:
                                            self.qinfo])])
         self.stats = widgets.Output()
         self.svstats = widgets.Output()
-        self.tab = widgets.Tab()
-        self.tab.children = [main, widgets.HBox([self.svstats, self.stats])]
-        self.tab.set_title(0, "Main")
-        self.tab.set_title(1, "Stats")
-        self.diag = diag
+        self.decomposed = widgets.Output()
+        self.tab = widgets.Tab((main, self.decomposed, widgets.HBox([self.svstats, self.stats])), titles=("Main", "Decomposed", "Stats"))
         if diag:
-            self.city = widgets.Output()
+            self.diagoffset = len(self.tab.children)
             self.tab.children += (widgets.Output(), widgets.Output(), widgets.Output())
-            self.tab.set_title(2, "Bloch")
-            self.tab.set_title(3, "Pauli")
-            self.tab.set_title(4, "City")
+            for i, n in enumerate(["Bloch", "Pauli", "City"]):
+                self.tab.set_title(self.diagoffset+i, n)
+        else:
+            self.diagoffset = 0
         if hasattr(self.algo, "stepproc"):
             self.tab.children += (widgets.Output(),)
             self.tab.set_title(len(self.tab.children)-1, "Step Proc")
@@ -149,6 +147,9 @@ class CircuitSlicer:
         with self.circuit:
             clear_output(wait=True)
             display(self.qc.draw("mpl"))
+        with self.decomposed:
+            clear_output(wait=True)
+            display(self.qc.decompose(reps=self.decomp).draw("mpl"))
         with self.func:
             clear_output(wait=True)
             print("Option:")
@@ -220,16 +221,11 @@ class CircuitSlicer:
                     e = entropy(reduced, base=2)
                     if e > 1e-10:
                         print(f"q{i}-q{j}: {e:.3f}")
-        if self.diag:
-            with self.tab.children[2]:
-                clear_output(wait=True)
-                display(plot_bloch_multivector(sv))
-            with self.tab.children[3]:
-                clear_output(wait=True)
-                display(plot_state_paulivec(sv))
-            with self.tab.children[4]:
-                clear_output(wait=True)
-                display(plot_state_city(sv))
+        if self.diagoffset:
+            for i, f in enumerate([plot_bloch_multivector, plot_state_paulivec, plot_state_city]):
+                with self.tab.children[self.diagoffset+i]:
+                    clear_output(wait=True)
+                    display(f(sv))
 
     def sample_on_qpu(self, _b, via_qasm=False):
         service = QiskitRuntimeService()
