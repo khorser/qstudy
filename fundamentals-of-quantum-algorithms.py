@@ -26,6 +26,8 @@ import numpy as np
 import sympy as sp
 
 from IPython.display import HTML, Latex
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import matplotlib.patches as patches
 from matplotlib.figure import Figure
 
@@ -603,7 +605,7 @@ CircuitSlicer(Grover(6, 1), 1, diag=False, common_factors=False);
 
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
-# # Playground        
+# # Playground
 
 # %%
 class T:
@@ -866,6 +868,58 @@ class PPhase:
 CircuitSlicer(PPhase(4), 16, common_factors=False, decomp=2);
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ### Manual DFT
+
+# %%
+n = 16
+t = np.linspace(0, 1, num=n, endpoint=False)
+x1 = np.cos(t*np.pi*2)
+x2 = np.cos(t*np.pi*4+np.pi/2)/2.0
+x3 = np.cos(t*np.pi)
+indices = np.arange(len(t))
+y = np.round(np.exp(-np.outer(indices, indices)*2*np.pi*1j/n) @ (x1+x2+x3)/np.sqrt(n), 10)
+
+fig, ax = plt.subplots(figsize=(6, 6))
+ax.plot(t, x1, color="red")
+ax.plot(t, x2, color="blue")
+ax.plot(t, x3, color="orange")
+plt.show()
+
+# %%
+amp = np.abs(y)
+mask = amp > 1e-10
+
+f = (indices[mask] + n//2) % n - n//2
+spectrum = y[mask]
+amp = amp[mask]
+phase = np.angle(spectrum)
+
+fig, ax = plt.subplots(figsize=(12, 6))
+
+cmap = cm.hsv
+norm = plt.Normalize(vmin=-np.pi, vmax=np.pi)
+colors = cmap(norm(phase))
+
+ax.vlines(f, 0, amp, colors=colors, linewidth=3, alpha=0.9)
+ax.scatter(f, amp, c=phase, cmap=cmap, norm=norm, s=20, zorder=3, edgecolor='black', linewidth=0.5)
+
+# Legend
+sm = cm.ScalarMappable(cmap=cmap, norm=norm)
+cbar = fig.colorbar(sm, ax=ax, pad=0.01)
+cbar.set_label("Phase")
+cbar.set_ticks([-np.pi, -np.pi/2, 0, np.pi/2, np.pi])
+cbar.set_ticklabels([r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
+
+ax.set_title("Spectrum", fontsize=14)
+ax.set_xlabel("Frequency")
+ax.set_ylabel("Amplitude")
+ax.set_facecolor('#f9f9f9')
+ax.grid(axis="y", linestyle=":", alpha=0.6)
+
+plt.tight_layout()
+plt.show()
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Original Deutsch
 
 # %%
@@ -880,7 +934,7 @@ CircuitSlicer(Deutsch(False));
 # s otherwise
 def non_promise1(i):
     # 0101...
-    s = np.tile(np.array([0, 1]), int(i / 2))
+    s = np.tile(np.array([0, 1]), i // 2)
     nonzero = s.nonzero()[0]
     c = QuantumCircuit(i+i+1)
     c.cx(nonzero, c.num_qubits-1)
