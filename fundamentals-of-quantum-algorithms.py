@@ -19,7 +19,7 @@ from functools import partial
 
 from qiskit import QuantumRegister, ClassicalRegister, AncillaRegister, QuantumCircuit, __version__ as qiskitver
 from qiskit.quantum_info import Statevector, partial_trace, Operator
-from qiskit.circuit.library import UnitaryGate, UGate, RYGate, QFT
+from qiskit.circuit.library import UnitaryGate, UGate, RYGate, QFT, TGate
 from qiskit.visualization import array_to_latex
 
 import numpy as np
@@ -612,14 +612,15 @@ class T:
     def get_options(self):
         return [("option 0", self.o0)]
     def get_circuit(self, f, label=""):
-        qc = QuantumCircuit(2, 2)
+        qc = QuantumCircuit(3, 3)
         qc.barrier(label="init")
         qc.h(0)
         qc.cx(0, 1)
+        qc.x(2)
         qc.barrier(label="prep")
-        qc.measure([0, 1], [0, 1])
+        qc.measure([0, 1, 2], [0, 1, 2])
         return qc
-CircuitSlicer(T());
+CircuitSlicer(T(), 8, decomp=3);
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## SimPy
@@ -834,6 +835,8 @@ CircuitSlicer(HadamardPhase(), 5, common_factors=False);
 
 # %%
 class PPhase:
+    def __init__(self, dim):
+        self.dim = dim
     def yphase(self, a):
         c = QuantumCircuit(1)
         c.x(0)
@@ -843,24 +846,24 @@ class PPhase:
         return [("1", partial(self.yphase, 0)),
                 ("+", partial(self.yphase, np.pi/2))]
     def get_circuit(self, opt, label=""):
-        ctrl = QuantumRegister(3, "c")
+        ctrl = QuantumRegister(self.dim, "c")
         x = QuantumRegister(1, "x")
-        m = ClassicalRegister(3, "m")
+        m = ClassicalRegister(self.dim, "m")
         qc = QuantumCircuit(ctrl, x, m)
         qc.append(opt().to_gate(label="Init"), x)
         qc.barrier(label="init")
         qc.h(ctrl)
         qc.barrier(label="prep")
-        phase = np.pi/4 # T
-        qc.cp(phase, 0, x)
-        qc.cp(phase, [1]*2, x)
-        qc.cp(phase, [2]*4, x)
+        ct = TGate().control()
+        for i in range(self.dim):
+            for _ in range(2**i):
+                qc.append(ct, [i, x])
         qc.barrier(label="apply")
-        qc.append(QFT(3, inverse=True, do_swaps=True), ctrl)
+        qc.append(QFT(self.dim, inverse=True, do_swaps=True), ctrl)
         qc.measure(ctrl, m)
         return qc
 
-CircuitSlicer(PPhase(), 16, common_factors=False, decomp=2);
+CircuitSlicer(PPhase(4), 16, common_factors=False, decomp=2);
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
 # ## Original Deutsch
