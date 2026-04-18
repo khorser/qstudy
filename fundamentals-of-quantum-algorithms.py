@@ -868,16 +868,19 @@ class PPhase:
 CircuitSlicer(PPhase(4), 16, common_factors=False, decomp=2);
 
 # %% [markdown] jp-MarkdownHeadingCollapsed=true
-# ### Manual DFT
+# ### DFT
 
 # %%
 n = 16
 t = np.linspace(0, 1, num=n, endpoint=False)
-x1 = np.cos(t*np.pi*2)
-x2 = np.cos(t*np.pi*4+np.pi/2)/2.0
-x3 = np.cos(t*np.pi)
+x1 = np.cos(t*np.pi*2+np.pi/2)
+x2 = np.cos(t*np.pi*4)*2.0
+x3 = np.cos(t*np.pi+np.pi/2)*3
 indices = np.arange(len(t))
-y = np.round(np.exp(-np.outer(indices, indices)*2*np.pi*1j/n) @ (x1+x2+x3)/np.sqrt(n), 10)
+x = x1+x2+x3
+y = np.round(np.exp(-np.outer(indices, indices)*2*np.pi*1j/n) @ x /np.sqrt(n), 10)
+
+print(f"Comparing with NumPy FFT: {np.allclose(y, np.fft.fft(x)/np.sqrt(n), atol=1e-10)}")
 
 fig, ax = plt.subplots(figsize=(6, 6))
 ax.plot(t, x1, color="red")
@@ -889,7 +892,7 @@ plt.show()
 amp = np.abs(y)
 mask = amp > 1e-10
 
-f = (indices[mask] + n//2) % n - n//2
+t = (indices[mask] + n//2) % n - n//2
 spectrum = y[mask]
 amp = amp[mask]
 phase = np.angle(spectrum)
@@ -900,8 +903,8 @@ cmap = cm.hsv
 norm = plt.Normalize(vmin=-np.pi, vmax=np.pi)
 colors = cmap(norm(phase))
 
-ax.vlines(f, 0, amp, colors=colors, linewidth=3, alpha=0.9)
-ax.scatter(f, amp, c=phase, cmap=cmap, norm=norm, s=20, zorder=3, edgecolor='black', linewidth=0.5)
+ax.vlines(t, 0, amp, colors=colors, linewidth=3, alpha=0.9)
+ax.scatter(t, amp, c=phase, cmap=cmap, norm=norm, s=20, zorder=3, edgecolor='black', linewidth=0.5)
 
 # Legend
 sm = cm.ScalarMappable(cmap=cmap, norm=norm)
@@ -911,7 +914,7 @@ cbar.set_ticks([-np.pi, -np.pi/2, 0, np.pi/2, np.pi])
 cbar.set_ticklabels([r"$-\pi$", r"$-\pi/2$", "0", r"$\pi/2$", r"$\pi$"])
 
 ax.set_title("Spectrum", fontsize=14)
-ax.set_xlabel("Frequency")
+ax.set_xlabel(r"$T$")
 ax.set_ylabel("Amplitude")
 ax.set_facecolor('#f9f9f9')
 ax.grid(axis="y", linestyle=":", alpha=0.6)
