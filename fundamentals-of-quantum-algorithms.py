@@ -871,13 +871,14 @@ CircuitSlicer(PPhase(4), 16, common_factors=False, decomp=2);
 # ### DFT
 
 # %%
-n = 16
+n = 17
 t = np.linspace(0, 1, num=n, endpoint=False)
 x1 = np.cos(t*np.pi*2+np.pi/2)
-x2 = np.cos(t*np.pi*4)*2.0
+x2 = np.cos(t*np.pi*4)*2.0 #+2.0
 x3 = np.cos(t*np.pi+np.pi/2)*3
+#x4 = np.cos(t*np.pi/2)*4
 indices = np.arange(len(t))
-x = x1+x2+x3
+x = x1+x2+x3#+x4
 y = np.round(np.exp(-np.outer(indices, indices)*2*np.pi*1j/n) @ x /np.sqrt(n), 10)
 
 print(f"Comparing with NumPy FFT: {np.allclose(y, np.fft.fft(x)/np.sqrt(n), atol=1e-10)}")
@@ -886,7 +887,9 @@ fig, ax = plt.subplots(figsize=(6, 6))
 ax.plot(t, x1, color="red")
 ax.plot(t, x2, color="blue")
 ax.plot(t, x3, color="orange")
+#ax.plot(t, x4, color="green")
 plt.show()
+np.mean(x1+x2+x3)
 
 # %%
 amp = np.abs(y)
