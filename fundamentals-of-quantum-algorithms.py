@@ -6,11 +6,11 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.19.1
+#       jupytext_version: 1.19.5
 #   kernelspec:
-#     display_name: Python 3 (ipykernel)
+#     display_name: qc
 #     language: python
-#     name: python3
+#     name: qc
 # ---
 
 # %%
@@ -983,3 +983,13 @@ print(np.round(f1 - balancedGrover.a0, 10)) # A1 -> A0
 
 # %%
 CircuitSlicer(Grover(6, 16), 4, diag=False, common_factors=False);
+
+# %% [markdown] jp-MarkdownHeadingCollapsed=true
+# ## AI Explain
+
+# %%
+from ollama_client import OllamaClient
+from ai_circuit_slicer import AICircuitSlicer
+
+client = OllamaClient(base_url="http://localhost:11434")
+s = AICircuitSlicer(DeutschJozsa(3), anthropic_client=client, model="llama3.1")
