@@ -341,7 +341,8 @@ def run_agent_ollama(base_url, algo, question, model, max_steps=8, verbose=True,
         tool_calls = message.get("tool_calls") or []
         content = message.get("content", "") or ""
         if strip_thinking:
-            content = _strip_thinking(content)
+            truncated = data.get("done_reason") not in (None, "stop")
+            content = _strip_thinking(content, truncated=truncated)
 
         messages.append({"role": "assistant", "content": content,
                           "tool_calls": tool_calls})

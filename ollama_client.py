@@ -22,9 +22,42 @@ import requests
 # doesn't pollute the displayed narration or the coverage scorer.
 _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
+# If max_tokens runs out mid-reasoning, the response can contain an opening
+# <think> with no closing tag -- observed with phi4-mini-reasoning:3.8b at
+# the default max_tokens=300, which never got far enough to finish a single
+# slice's reasoning. _THINK_BLOCK's non-greedy match requires a closing tag
+# and leaves an unterminated block untouched, which used to leak raw,
+# mid-sentence chain-of-thought as if it were the narration.
+_THINK_OPEN_UNCLOSED = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
 
-def _strip_thinking(text):
-    return _THINK_BLOCK.sub("", text).strip()
+
+def _strip_thinking(text, truncated=False):
+    """Strip a complete <think>...</think> block unconditionally.
+
+    An *unterminated* <think> is ambiguous and needs `truncated` (whether
+    generation was cut short by the token budget rather than reaching a
+    natural stop) to resolve correctly:
+    - truncated=True: the budget ran out mid-thought. There's no real
+      answer in what's left, just reasoning that never finished, so
+      discard from <think> through end of string.
+    - truncated=False: generation stopped on its own but still left an
+      unterminated <think>. Observed with phi4-mini-reasoning:3.8b, which
+      apparently never emits a closing tag at all, even when it's
+      genuinely done -- its "reasoning" and its answer aren't separated
+      by any reliable delimiter. Discarding here would throw away a
+      legitimate answer, so only the bare opening tag(s) are dropped and
+      the rest of the text (reasoning blended with the real answer) is
+      kept. The same model has also been observed re-opening a second
+      bare <think> mid-response (e.g. as a garbled "</> <think>"), so all
+      occurrences are stripped, not just the first.
+    """
+    text = _THINK_BLOCK.sub("", text)
+    if "<think>" in text:
+        if truncated:
+            text = _THINK_OPEN_UNCLOSED.sub("", text)
+        else:
+            text = text.replace("<think>", "")
+    return text.strip()
 
 
 class _Messages:
@@ -65,7 +98,10 @@ class _Messages:
         resp.raise_for_status()
         data = resp.json()
         message = data.get("message", {})
-        text = _strip_thinking(message.get("content", "") or "")
+        # done_reason "length" means num_predict was hit before a natural
+        # stop -- see _strip_thinking's truncated= parameter.
+        truncated = data.get("done_reason") not in (None, "stop")
+        text = _strip_thinking(message.get("content", "") or "", truncated=truncated)
 
         if not text:
             # Some models/Ollama versions route everything into a separate
@@ -97,7 +133,11 @@ class _Messages:
 
 
 class OllamaClient:
-    def __init__(self, base_url="http://localhost:11434", timeout=120):
+    def __init__(self, base_url="http://localhost:11434", timeout=300):
+        # 120s was too short for reasoning-heavy local models at a
+        # max_tokens budget large enough to actually finish (observed:
+        # phi4-mini-reasoning:3.8b routinely takes 100-200+s per slice at
+        # max_tokens=3500). 300s gives headroom without being unbounded.
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.messages = _Messages(self)

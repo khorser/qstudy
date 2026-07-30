@@ -303,3 +303,334 @@ sufficient for a grounded answer -- the coverage-scorer idea from
 `ai_narrator.py`'s README (score a narration against hand-verified facts)
 would catch exactly this class of error and is the natural next thing to
 port over to this module if it goes further than a single-question demo.
+
+# Testing compare_backends.py / ai_narrator.py against local Ollama models
+
+Separate from the agentic tool-planning module above: this piece is
+plain grounded narration -- the model is handed already-computed slice
+facts and asked to explain them in 2-4 sentences, no tools, no planning.
+Worth testing on its own since it's a different task shape and the
+failure modes turned out to be different too.
+
+```
+pixi run -e qc python compare_backends.py --skip-anthropic --ollama-model <model>
+```
+
+## qwen3.5:9b and qwen2.5:7b: both grounded, neither hallucinated
+
+Ran both against the `xor`-oracle Deutsch-Jozsa circuit, scored against
+`DJ_BV_REFERENCE`. Both stayed within the given facts -- no invented gate
+names or numbers, matching the design intent in `ai_narrator.py`'s
+docstring. But the coverage scores are a weak proxy for actual quality in
+both directions:
+
+- **Coverage under-counts good narrations.** Both models scored 0.00 on
+  the `init` slice (missing "ancilla," "eigenstate," "phase kickback,"
+  "-1") despite giving factually accurate descriptions of what the raw
+  facts show. Neither model was ever told *which* qubit is the ancilla or
+  that phase kickback is happening -- `build_slice_prompt` doesn't label
+  that -- so declining to use those words is arguably the *correct*
+  response to avoid inventing a fact, not a narration failure. The
+  reference answer only reads well because a human already knows the
+  algorithm; the scorer conflates "matches expert vocabulary" with
+  "grounded in what was actually given."
+- **Coverage over-counts a real error.** On the `apply` slice,
+  `qwen2.5:7b` first states the three CX gates "entangle some qubits,"
+  then two sentences later says "there are no entangled pairs of
+  qubits" -- a direct self-contradiction. `qwen3.5:9b`'s narration of the
+  same slice is careful never to claim entanglement happened, only that
+  "entangling gate counts show non-trivial interaction" while "no
+  measurable entanglement entropy" was detected -- consistent with the
+  actual physics (phase kickback via CNOTs onto an ancilla in `|->`
+  leaves the state a product state, per the note already in
+  `q/README.md`). Yet `qwen2.5:7b` scored *higher* (0.33 vs 0.00) on this
+  slice, purely because it happened to use the word "oracle" elsewhere in
+  the same paragraph. The keyword scorer doesn't notice the
+  contradiction at all.
+
+## phi4-mini-reasoning:3.8b: a real bug, not just a bad model
+
+Ran the same comparison against `phi4-mini-reasoning:3.8b` (default
+`max_tokens=300`, matching `explain_slice`'s default). Every single
+slice's "narration" was a raw, mid-sentence `<think>...` block with no
+closing tag -- e.g. for `init`: *"Density-matrix purity is 1, meaning all
+qubits are perfectly known"* -- cut off mid-thought.
+
+Root cause: `ollama_client.py`'s `_strip_thinking` regex,
+`<think>.*?</think>`, only matches a **closed** block. This model needs
+far more than 300 tokens to think through even one slice's facts, so
+generation is cut off by `max_tokens` before a closing tag is ever
+emitted. The regex found nothing to strip, so raw, truncated internal
+monologue was returned as the "narration" -- and the coverage scorer then
+scored that monologue (which incidentally mentions "hadamard" or
+"oracle" while reasoning aloud about the general algorithm), producing
+misleadingly non-zero coverage numbers for a narration that never
+actually happened.
+
+### Fix 1: `_strip_thinking` needs to know whether generation was truncated
+
+Naively "discard everything after an unterminated `<think>`" turned out
+to be wrong too. Diagnostic direct call to `/api/chat` with
+`num_predict: 3500` showed this model can finish naturally
+(`done_reason: "stop"`, ~1838 tokens) -- but **still never emits a
+closing `</think>` tag**, even when done. Its reasoning and its answer
+aren't separated by any reliable delimiter; the whole response is one
+continuous block. Discarding "from `<think>` to end of string"
+unconditionally would throw away the real answer along with the
+reasoning whenever this model is used, not just when it's cut off.
+
+Fixed by giving `_strip_thinking` a `truncated` parameter (both
+`ollama_client.py` and `agentic_analyst.py`'s `run_agent_ollama` now pass
+`data.get("done_reason") not in (None, "stop")`):
+- **truncated=True** (budget ran out mid-thought, `done_reason != "stop"`):
+  discard from the unterminated `<think>` through end of string -- there's
+  no real answer in what's left.
+- **truncated=False** (model stopped on its own but still left the tag
+  open): only strip the bare `<think>` token itself and keep the rest --
+  better to show a slightly messy blended reasoning+answer text than to
+  silently discard a real answer that happens to follow an unclosed tag.
+
+### Fix 2: `--max-tokens` CLI flag on `compare_backends.py`
+
+Added `--max-tokens` (default 300, unchanged), threaded through
+`run_backend` -> `explain_slice`, rather than hardcoding a bump for one
+model name in shared code. Testing progression:
+- `max_tokens=300` (default): "Empty response" for every slice --
+  correctly identified as truncated, stripped to nothing, and the
+  existing fallback message in `ollama_client.py` fired as designed
+  ("...max_tokens ran out during reasoning...").
+- `max_tokens=1500`: still "Empty response" for every slice -- 1500
+  tokens is *still* not enough for this model to finish even one slice.
+- `max_tokens=3500`: **`prep` and `apply` slices now produce real,
+  substantive narrations**, correctly extracted (verified no leaked
+  `<think>` tag, no truncated fragment). `init`/`done`/`final` instead
+  hit `OllamaClient`'s separate, unrelated 120s request timeout -- this
+  model consistently takes 100-200+s per slice once given enough budget
+  to actually finish, and `OllamaClient.__init__`'s `timeout=120` default
+  (used by `compare_backends.py`'s `build_ollama_client`, separate from
+  `run_agent_ollama`'s own `timeout` param) isn't long enough. Not yet
+  addressed -- a straightforward `--ollama-timeout` CLI flag would fix it
+  the same way `--max-tokens` did, but wasn't part of what was asked for
+  this round.
+
+### Net result
+
+`phi4-mini-reasoning:3.8b` isn't simply "bad at this task" the way it was
+at tool planning -- it's a *much* higher token-budget model than the
+others tested (qwen3.5:9b and qwen2.5:7b both answer in a few hundred
+tokens; this one needs 1500-3500+ per slice), and the original code had
+two latent bugs that made that show up as silent hallucination-shaped
+garbage instead of an obvious "budget too small" error: an unstrippable
+unterminated `<think>` tag, and a scorer that can't tell the difference
+between a real narration and raw internal monologue that happens to share
+vocabulary with one. Both are now fixed at the harness level.
+
+## Follow-up: bumped the Ollama client timeout, re-ran at max_tokens=3500
+
+`OllamaClient.__init__`'s default `timeout=120` was too short once
+`--max-tokens` was raised enough for this model to actually finish (it
+routinely takes 100-200+s per slice). Bumped the default to 300s, and
+added a matching `--ollama-timeout` CLI flag to `compare_backends.py`
+(mirroring `--max-tokens` rather than hardcoding a per-model value).
+
+Re-ran `phi4-mini-reasoning:3.8b` at `--max-tokens 3500 --ollama-timeout
+300`. Result: 3 of 5 slices (`init`, `prep`, `done`) now produce genuine,
+complete narrations instead of raw unterminated reasoning or a timeout
+exception; `apply` and `final` still ran out of the 3500-token budget
+before finishing (correctly reported as "Empty response," not leaked
+partial text) -- confirming this model's per-slice token need varies
+enough that there's no single reliable budget, only "enough, most of the
+time." No more hard `ReadTimeout` crashes anywhere in this run.
+
+Two further things surfaced by actually reading the completed narrations:
+
+- **A real factual error in a "successful" narration.** For `init`, the
+  facts given are `gate_counts: {"x": 1}` -- one Pauli-X gate, applied to
+  the ancilla per the actual circuit (`c.x(y)` in `DeutschJozsa.get_circuit`).
+  The model instead reasons "x=1... I think refers to applying the
+  Hadamard gate" and concludes the slice "applies Hadamard gates to each
+  input qubit" -- fabricating a completely different (and wrong) gate and
+  target qubit from a plain, unambiguous key in the JSON it was given.
+  Same species of error as `qwen2.5:7b`'s entangling-gate mixup in the
+  agentic test above: correct data in, confidently wrong claim out, no
+  tool-use or planning involved this time -- it's a base
+  reading-comprehension failure on structured facts, independent of the
+  tool-calling story entirely.
+- **A residual stripping bug**: the `done` slice's raw response contained
+  a second, spurious bare `<think>` reopening mid-answer (visible as a
+  garbled `</> <think>` before a "**Step-by-Step Explanation:**" section),
+  which leaked through because the fix only stripped the *first* bare
+  `<think>` occurrence (`text.replace("<think>", "", 1)`). Changed to
+  strip all bare occurrences (`text.replace("<think>", "")`) since this
+  model has now been observed doing this more than once in a single
+  response. Verified against a synthetic reproduction of the exact
+  pattern seen in that response.
+
+Net effect of this whole `phi4-mini-reasoning:3.8b` thread: what looked
+at first like "this model just can't do the task" turned out to be mostly
+a token-budget and harness-bug problem (now fixed), *plus* a genuine,
+separate reading-comprehension weakness that shows up even once budget
+and stripping are no longer confounding the picture. Worth keeping both
+framings in the writeup -- they're different claims and this model
+exhibits both.
+
+## Run 5: llama3.1:8b -- inconsistent, not a clean pass or fail
+
+Every clean tool-planning result up to this point was Qwen-family
+(`qwen3.5:9b`, `qwen2.5:7b`); every failure was a reasoning model
+(`phi4-mini-reasoning`, `deepseek-r1`) -- confounded, since it was unclear
+whether "reliably plans tool calls" tracks the Qwen family specifically or
+"non-reasoning, tool-call-trained model" more generally. `llama3.1:8b`
+ships with Meta's native function-calling template, so it's a same-lineage
+sanity check on whether the Qwen result generalizes.
+
+Ran the identical question twice (same code path, `max_steps=10`,
+`timeout=180`):
+
+- **Run A (11.3s)**: called `compare_resource_cost('0', 'xor')`
+  *immediately*, skipping `run_circuit` -- correctly caught by the
+  guardrail (`"error": "oracle '0' not yet simulated -- call run_circuit
+  first"`). The model's next message correctly diagnosed the problem in
+  prose ("It seems I need to simulate the circuit... Let me do that...")
+  but then wrote **`run_circuit()` as literal text** instead of emitting
+  an actual tool call. Since that response contained no `tool_calls`, the
+  loop terminated immediately, treating the placeholder text as the final
+  answer. A distinct failure mode from anything seen so far: not zero
+  tool calls, not a hallucinated circuit -- one *wrong-order* tool call,
+  a correct verbal diagnosis of its own mistake, and then a failure to
+  actually act on that diagnosis.
+- **Run B (12.6s)**: clean -- `run_circuit` x2, then `compare_resource_cost`
+  directly, correct grounded final answer. Textbook ideal trace, as good
+  as `qwen3.5:9b`/`qwen2.5:7b`'s best runs.
+
+Conclusion: `llama3.1:8b` *can* plan this task correctly and does ship
+with real tool-calling support, but is run-to-run non-deterministic
+between a clean plan and a broken one that doesn't recover from its own
+ordering mistake. That's a third distinct category, next to "consistently
+plans well" (Qwen models tested) and "never engages tools at all"
+(phi4-mini-reasoning) -- worth naming explicitly in the writeup rather
+than averaging it into either bucket.
+
+## Run 6: gemma2:9b -- rejected before it ever reaches the model
+
+Immediate `400 Bad Request` from Ollama itself:
+
+```
+{"error": "registry.ollama.ai/library/gemma2:9b does not support tools"}
+```
+
+This is qualitatively different from every other failure recorded here.
+`phi4-mini-reasoning:3.8b` and `llama3.1:8b`'s bad run both got a normal
+`200` response and a real (if wrong) attempt from the model -- the
+request reached the model and the model's own behavior was the problem.
+`gemma2:9b` never gets that far: Ollama's chat template for this model
+has no tool-calling scaffolding at all, so the API refuses the request
+outright, before the model sees the question or the tools.
+
+This is the cleanest confirmation of the hypothesis that motivated
+testing these two models: the axis that actually predicts success here
+isn't "reasoning vs. non-reasoning" -- it's whether the model was trained
+with, and Ollama has wired up, native tool-calling support at all. Gemma 2
+wasn't; Llama 3.1 and the Qwen2.5+/3.5 line were.
+
+## Updated cross-model summary
+
+| Model | Tool-calling available? | Result |
+|---|---|---|
+| qwen3.5:9b | yes | Consistently clean, grounded plans across multiple runs |
+| qwen2.5:7b | yes | Clean plan, but one run contained a confidently-wrong misread of correct tool data |
+| llama3.1:8b | yes | Non-deterministic: one clean run, one run with a wrong-order call it correctly diagnosed but failed to correct |
+| phi4-mini-reasoning:3.8b | yes (template accepts it) | Model itself never calls tools; separately, needs a much larger token budget than other models even for plain narration, and can misread structured facts outright |
+| deepseek-r1:8b | yes (native thinking field) | Untested for planning quality -- abandoned as impractically slow per turn on this hardware |
+| gemma2:9b | **no** -- Ollama rejects the request | N/A -- never reaches the model |
+
+The overall shape of the result: whether a small local model can serve as
+the planner in this kind of narrow, guarded agentic loop depends far more
+on whether it was trained with (and Ollama has wired up) tool-calling
+support than on model size or "reasoning" branding -- and even among
+models that clear that bar, reliability varies from "consistent" to
+"coin flip" to "confidently wrong," which is exactly the kind of variance
+a one-shot demo would hide and a portfolio writeup should surface
+explicitly rather than reporting a single cherry-picked run.
+
+## Non-agentic cross-check: llama3.1:8b and gemma2:9b on plain narration
+
+The agentic runs above only tested `llama3.1:8b`/`gemma2:9b` on
+tool-planning. `gemma2:9b` failed that outright (Ollama rejects `tools`
+for it entirely) -- but that says nothing about whether the model itself
+is competent at the *other* task in this portfolio piece, plain grounded
+narration (`compare_backends.py`/`ai_narrator.py`), which never sends
+Ollama a `tools` field at all. Ran both through the same
+Deutsch-Jozsa-`xor` narration comparison used earlier for qwen3.5:9b /
+qwen2.5:7b / phi4-mini-reasoning.
+
+- **`llama3.1:8b`** narrates competently overall (similar coverage
+  profile to the Qwen models), but repeats the *exact same* misread seen
+  earlier with `phi4-mini-reasoning:3.8b`: for `init`, it states *"a
+  single Hadamard gate (x=1) is applied to one qubit"* -- but `x=1` means
+  one Pauli-X gate (the ancilla flip in `c.x(y)`), not a Hadamard.
+  (Revised after a third data point below: `qwen2.5:7b` and
+  `deepseek-r1:8b` both correctly identify this as Pauli-X, and those are
+  also the two strongest, most consistent performers across every test
+  in this file. So this looks less like a prompt-format trap that
+  catches everyone equally and more like it correlates with general
+  model competence -- weaker models guess "Hadamard" because
+  Deutsch-Jozsa is strongly associated with Hadamards, stronger models
+  actually parse the literal key. `build_slice_prompt`'s terse `"x=1"`
+  notation is still plausibly a contributing factor -- a clearer label
+  like `"X gate: 1"` would remove the ambiguity entirely and cost
+  nothing -- but it's not the sole explanation.)
+- **`gemma2:9b`** narrates solidly, and notably *does not* make the
+  x=1/Hadamard mistake -- it correctly describes `init` as "a single
+  qubit initialized to the state |1>," and hedges appropriately
+  elsewhere ("likely," "would be needed to know precisely") rather than
+  asserting unsupported specifics. No factual errors spotted in any of
+  the five slices.
+
+This is the clean confirmation that tool-calling support and narration
+competence are separate axes, not the same underlying capability:
+`gemma2:9b` fails the agentic task completely (hard API rejection, never
+reaches the model) but is a perfectly reasonable narrator when just asked
+to explain facts it's handed directly. Model choice for this portfolio
+piece should be task-specific -- the same model ranking does not carry
+over between "plan which tools to call" and "narrate given facts."
+
+## deepseek-r1:8b on narration: task shape changes whether "too slow" applies
+
+`deepseek-r1:8b` was abandoned for the agentic loop as impractically
+slow (didn't respond even at a 1200s timeout to a single non-tool
+prompt). But narration is a single request per slice, not up to 10
+chained tool-call round trips -- worth checking separately rather than
+assuming the same verdict carries over. Ran with a generous budget
+(`--max-tokens 2000 --ollama-timeout 900`).
+
+First pass (`--max-tokens 2000`): **4 of 5 slices completed** with real,
+reasonably grounded narrations (`init`, `prep`, `apply`, `final`). Only
+`done` ran out of the 2000-token budget mid-thought -- and it failed
+*safely*: because this model uses Ollama's native, separate `"thinking"`
+field (unlike `phi4-mini-reasoning`, which inlines `<think>` in `content`
+and never closes it), `ollama_client.py`'s existing fallback message fired
+exactly as designed ("...only a 'thinking' field... try a much higher
+max_tokens..."), with no leaked or truncated garbage presented as an
+answer.
+
+Re-ran at `--max-tokens 3500` (the same budget that got
+`phi4-mini-reasoning` mostly working): **all 5 slices completed**,
+including `done` this time. Quality held up across the full set --
+`init` again correctly identifies "an X (NOT) gate... flipping its value
+from |0> to |1>" (no Hadamard misread, consistent with the first pass),
+and every slice stays cautious, declining to overclaim entanglement or
+invent oracle mechanics beyond what the facts support. `done`'s coverage
+score is 0.00 despite being a real, sensible answer ("applies 3 gates to
+prepare for measurement... no entangling gates... no cross-talk") --
+another instance of the scorer penalizing a grounded but
+vocabulary-sparse narration, same pattern noted for `qwen3.5:9b`/
+`qwen2.5:7b` above.
+
+Net: "too slow to use" is a claim about a specific task shape (a long,
+guarded multi-turn agentic loop), not a blanket verdict on the model. For
+a single-shot grounded-narration task, `deepseek-r1:8b` is slow but fully
+usable at a large-enough token budget (3500, same as
+`phi4-mini-reasoning` needed) and produces some of the more careful,
+differentiated narrations recorded in this file -- worth remembering
+before writing off a model based on one task's results.

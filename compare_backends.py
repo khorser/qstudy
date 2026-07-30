@@ -79,16 +79,16 @@ def build_anthropic_client():
         return None, f"could not create client (check ANTHROPIC_API_KEY): {e}"
 
 
-def build_ollama_client(base_url):
+def build_ollama_client(base_url, timeout=300):
     try:
         from ollama_client import OllamaClient
-        client = OllamaClient(base_url=base_url)
+        client = OllamaClient(base_url=base_url, timeout=timeout)
         return client, None
     except Exception as e:
         return None, f"could not create client: {e}"
 
 
-def run_backend(name, client, model, all_facts):
+def run_backend(name, client, model, all_facts, max_tokens=300):
     """Returns {label: {"narration": str, "coverage": float|None, "missing": [...]}}
     or None if the client itself failed to build."""
     if client is None:
@@ -96,7 +96,7 @@ def run_backend(name, client, model, all_facts):
     rows = {}
     for label, facts in all_facts.items():
         try:
-            narration = explain_slice(client, facts, model=model)
+            narration = explain_slice(client, facts, model=model, max_tokens=max_tokens)
         except Exception as e:
             narration = f"[ERROR calling {name}: {e}]"
         scored = score_coverage(label, narration)
@@ -142,6 +142,16 @@ def main():
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--skip-anthropic", action="store_true")
     parser.add_argument("--skip-ollama", action="store_true")
+    parser.add_argument("--max-tokens", type=int, default=300,
+                         help="Reasoning models can burn the whole budget on "
+                              "hidden/visible chain-of-thought before emitting "
+                              "a narration -- raise this if you see truncated "
+                              "or empty output for a given model.")
+    parser.add_argument("--ollama-timeout", type=int, default=300,
+                         help="Request timeout in seconds for the Ollama leg. "
+                              "A larger --max-tokens means more generation time "
+                              "needed per slice -- raise this alongside it for "
+                              "slow reasoning models.")
     args = parser.parse_args()
 
     dj = DeutschJozsa(3)
@@ -155,15 +165,17 @@ def main():
         if err:
             print(f"[Anthropic skipped: {err}]", file=sys.stderr)
         else:
-            anthropic_rows = run_backend("Anthropic", client, args.anthropic_model, all_facts)
+            anthropic_rows = run_backend("Anthropic", client, args.anthropic_model, all_facts,
+                                          max_tokens=args.max_tokens)
 
     ollama_rows = None
     if not args.skip_ollama:
-        client, err = build_ollama_client(args.ollama_url)
+        client, err = build_ollama_client(args.ollama_url, timeout=args.ollama_timeout)
         if err:
             print(f"[Ollama skipped: {err}]", file=sys.stderr)
         else:
-            ollama_rows = run_backend("Ollama", client, args.ollama_model, all_facts)
+            ollama_rows = run_backend("Ollama", client, args.ollama_model, all_facts,
+                                       max_tokens=args.max_tokens)
 
     if anthropic_rows is None and ollama_rows is None:
         print("Neither backend was available -- nothing to compare.", file=sys.stderr)
