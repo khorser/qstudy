@@ -9,9 +9,15 @@ This is real, unmocked code meant to run in your own environment with:
 Either leg is skipped gracefully (with a note in the report) if its backend
 isn't reachable, so you can run this with only one of the two configured.
 
+Deliberately does NOT use AICircuitSlicer/CircuitSlicer here: those build
+an interactive ipywidgets UI and call display() at the end of __init__,
+which needs a real IPython/Jupyter frontend. A plain script has none, so
+this uses headless_facts.compute_all_slice_facts() instead -- same facts,
+no widget, no display() call, runs under plain `python`.
+
 Usage:
     python compare_backends.py
-    python compare_backends.py --ollama-model qwen2.5:14b
+    python compare_backends.py --ollama-model qwen2.5:7b
     python compare_backends.py --skip-anthropic
     python compare_backends.py --skip-ollama
 """
@@ -20,7 +26,7 @@ import sys
 
 from qiskit import QuantumRegister, ClassicalRegister, AncillaRegister, QuantumCircuit
 
-from ai_circuit_slicer import AICircuitSlicer
+from headless_facts import compute_all_slice_facts
 from ai_narrator import explain_slice, score_coverage, DJ_BV_REFERENCE
 
 
@@ -82,15 +88,13 @@ def build_ollama_client(base_url):
         return None, f"could not create client: {e}"
 
 
-def run_backend(name, client, model, slicer, labels):
+def run_backend(name, client, model, all_facts):
     """Returns {label: {"narration": str, "coverage": float|None, "missing": [...]}}
     or None if the client itself failed to build."""
     if client is None:
         return None
     rows = {}
-    for label in labels:
-        slicer.step.value = label
-        facts = slicer._current_slice_facts()
+    for label, facts in all_facts.items():
         try:
             narration = explain_slice(client, facts, model=model)
         except Exception as e:
@@ -134,25 +138,16 @@ def print_report(labels, anthropic_rows, ollama_rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--anthropic-model", default="claude-sonnet-5")
-    parser.add_argument("--ollama-model", default="llama3.1")
+    parser.add_argument("--ollama-model", default="qwen2.5:7b")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--skip-anthropic", action="store_true")
     parser.add_argument("--skip-ollama", action="store_true")
     args = parser.parse_args()
 
-    slicer = AICircuitSlicer(
-        DeutschJozsa(3),
-        diag=False,
-        common_factors=False,
-        algo_description=DeutschJozsa.__doc__,
-    )
-    # We call explain_slice() directly per backend below rather than going
-    # through the widget's single _build_client()/dropdown, since we want
-    # both backends' results side by side rather than whichever one the
-    # dropdown happens to be set to.
-    slicer.option.value = slicer.option.options[1][1]  # "xor" oracle
-
-    labels = list(slicer.step.options)
+    dj = DeutschJozsa(3)
+    qc = dj.get_circuit(dj.f_xor, "xor")
+    all_facts = compute_all_slice_facts(qc, "DeutschJozsa", DeutschJozsa.__doc__)
+    labels = list(all_facts.keys())
 
     anthropic_rows = None
     if not args.skip_anthropic:
@@ -160,7 +155,7 @@ def main():
         if err:
             print(f"[Anthropic skipped: {err}]", file=sys.stderr)
         else:
-            anthropic_rows = run_backend("Anthropic", client, args.anthropic_model, slicer, labels)
+            anthropic_rows = run_backend("Anthropic", client, args.anthropic_model, all_facts)
 
     ollama_rows = None
     if not args.skip_ollama:
@@ -168,7 +163,7 @@ def main():
         if err:
             print(f"[Ollama skipped: {err}]", file=sys.stderr)
         else:
-            ollama_rows = run_backend("Ollama", client, args.ollama_model, slicer, labels)
+            ollama_rows = run_backend("Ollama", client, args.ollama_model, all_facts)
 
     if anthropic_rows is None and ollama_rows is None:
         print("Neither backend was available -- nothing to compare.", file=sys.stderr)
