@@ -634,3 +634,375 @@ usable at a large-enough token budget (3500, same as
 `phi4-mini-reasoning` needed) and produces some of the more careful,
 differentiated narrations recorded in this file -- worth remembering
 before writing off a model based on one task's results.
+
+# Testing frontier models via a third-party aggregator (ModelProxy)
+
+## Trust caveat -- read before trusting any result in this section
+
+User has an API key for `ModelProxy`, an OpenAI-compatible aggregator, and
+wants to compare frontier models (GPT, Gemini) against Claude and the
+local models above. `GET /v1/models` returned a catalog including entries
+like `claude-opus-5`, `claude-opus-4-6`, `claude-opus-4-7`, and
+`claude-sonnet-4-6` -- none of which fit Anthropic's actual current
+lineup (Fable 5, Sonnet 5, Haiku 4.5, Opus 4.8; no "Opus 5" or
+intermediate 4-6/4-7 exists). That's a concrete, verifiable
+inconsistency, not just unfamiliarity -- the GPT-5.x/Gemini-3.x/Grok-4.x
+entries are less clear-cut (those providers could plausibly have shipped
+real updates after this environment's knowledge cutoff), but given the
+Claude portion of the catalog looks fabricated, **nothing tested through
+this aggregator should be treated as a verified result for the named
+provider's actual model**. Any result below is "what ModelProxy serves
+under this label," not "how the real GPT-5.4 performs" -- the aggregator
+could be substituting a cheaper or different underlying model behind any
+given name. Flagged to the user before running anything; user chose to
+proceed and pick specific model IDs deliberately rather than trust the
+catalog wholesale.
+
+Built `aggregator_client.py` -- same duck-typed-`anthropic.Anthropic`
+seam as `ollama_client.py`'s `OllamaClient`, but speaking OpenAI's actual
+`/chat/completions` shape (`choices[0].message.content`) against
+ModelProxy's endpoint (read from `AGGREGATOR_BASE_URL`, no real hostname
+committed anywhere in this repo), reading the key from `ANTHROPIC_API_KEY`
+(the env var name the user's key happened to be exported under -- not
+significant beyond that).
+
+### Identity probe: the Claude namespace is confirmed broken, GPT/Gemini are not
+
+Sent the same question -- *"What is your exact model name/version, and
+who trained you? Be as specific as you can, and say if you are not
+certain of some detail."* -- to every model tested, to check self-reported
+identity against the claimed label. This turned "unverified" into
+"partially disproven":
+
+**Claude-labeled endpoints (`claude-sonnet-5`, `claude-opus-5`,
+`claude-opus-4-6`, `claude-sonnet-4-6`, `claude-fable-5`):** 4 of 5
+self-identified as **"Kiro, an AI-powered development environment"**
+(one explicitly: *"built by AWS"*) -- a completely different product
+identity, not Claude/Anthropic at all. Only `claude-fable-5` correctly
+said *"I'm Claude, made by Anthropic."* This is no longer a naming
+inconsistency worth flagging as a caveat -- it's direct evidence that
+most of this aggregator's Claude-labeled endpoints are not passing
+through to genuine Anthropic API calls. Whatever `claude-sonnet-5` (a
+real, current model name) returns here is not Claude's actual output;
+it's some other product's system identity leaking through. **None of
+the Claude-labeled endpoints on this aggregator should be used for
+anything, including future comparisons in this file.**
+
+**GPT-labeled endpoints (`gpt-5.4`, `gpt-5.4-mini`):** both correctly
+self-identified as OpenAI/GPT-5-family (`gpt-5.4`: *"I'm Codex, a coding
+agent based on GPT-5... trained by OpenAI"*; `gpt-5.4-mini`: *"I'm
+ChatGPT, running... based on GPT-5... OpenAI"*), with the normal, expected
+uncertainty about exact checkpoint/build string -- no wrong-provider
+claim, unlike the Claude namespace.
+
+**Gemini-labeled endpoints (`gemini-3.1-pro-high`, `gemini-3.5-flash`):**
+both correctly self-identified as Gemini/Google (*"I am Gemini, a large
+language model... trained by Google. I am completely certain of my
+identity as a Gemini model and that Google is my creator"*), same pattern
+-- confident about family/provider, appropriately uncertain about exact
+version string.
+
+**Revised trust assessment**: this doesn't prove the GPT/Gemini results
+above are the literal flagship models with no substitution -- a
+well-crafted system prompt could in principle fake this too -- but it's
+meaningfully stronger evidence than "the catalog didn't look familiar."
+The simplest explanation consistent with all the evidence: the GPT and
+Gemini namespaces on this aggregator route to genuinely GPT/Gemini-family
+backends, while the Claude namespace routes through a different,
+misconfigured or relabeled product (Kiro) that was never given a
+system-level override to claim the requested identity. The narration and
+agentic results recorded above for `gpt-5.4`/`gpt-5.4-mini`/
+`gemini-3.1-pro-high`/`gemini-3.5-flash` are kept in this file with that
+caveat.
+
+### `claude-opus-5` and `claude-sonnet-4-6`: testing "Kiro" anyway, clearly labeled
+
+Decided to test these two anyway, purely as "whatever this mystery system
+actually is" -- **every result in this subsection is Kiro, not Claude,
+despite the model name used in the request.** Worth doing precisely
+because the response style (careful hedging, explicit "I won't speculate
+beyond what's given," precise phase-kickback reasoning) reads as very
+Claude-like -- plausible, unconfirmed hypothesis: Kiro (a real AWS coding
+product) may itself be built on a Claude backend under its own product
+persona, which is a normal and common pattern for products built on an
+LLM API, not necessarily evidence of deception by Kiro itself. The
+aggregator's mislabeling is the separate, confirmed problem -- whatever
+Kiro is built on, requesting it via a fabricated "claude-opus-5" model ID
+through a third-party reseller is not a legitimate way to reach it.
+
+**Narration**: both scored among the best results in this file.
+`claude-opus-5`/Kiro hit **1.0 coverage on both `apply` and `done`** with
+fully accurate content, including a precise, unprompted phase-kickback
+explanation: *"That's the signature of phase kickback: the CX gates leave
+the register separable while stamping f-dependent signs on it."*
+`claude-sonnet-4-6`/Kiro was the **only model in this entire file** to
+correctly and explicitly use the word "ancilla" on its own (`init` slice:
+*"prepares the ancilla qubit in state |1⟩ before a Hadamard layer turns it
+into the |−⟩ ... state, which is what allows phase kickback from the
+oracle to work"*) -- something no local model, and neither GPT nor Gemini,
+managed.
+
+**Agentic tool-planning**: a sharp split between the two, unlike the
+narration results:
+- `claude-opus-5`/Kiro produced the single most thorough trace in this
+  entire file -- 10 tool calls, 0 errors, ~39s, ending in a final answer
+  with a markdown comparison table, a correct phase-kickback explanation,
+  an explicit statement of what it *couldn't* confirm from the tools
+  ("the tools don't expose qubit indices or the circuit itself, so I
+  can't confirm the wiring directly"), and an unprompted offer to extend
+  the comparison to the other two oracles it hadn't been asked about.
+- `claude-sonnet-4-6`/Kiro failed almost instantly -- **3.2s, zero tool
+  calls**, final answer was only *"Let me start by listing the available
+  oracles, then simulate both and compare them"* -- a stated intention
+  with no actual tool call behind it, closer to `llama3.1:8b`'s
+  "wrote the tool call as text instead of calling it" failure than to
+  `phi4-mini-reasoning`'s full hallucination, but even more minimal (no
+  fabricated content at all, just an unexecuted plan).
+
+Net: even setting the mislabeling issue aside, "Kiro" (whatever it is) is
+not uniformly reliable either -- excellent under one requested label,
+broken under another, on the identical question. That inconsistency is
+itself informative and consistent with the rest of this file's overall
+finding: model identity and quality varies a lot even within what looks
+like "the same system," and a single test run is never enough to
+characterize any of these.
+
+### The remaining two: `claude-opus-4-6` (Kiro) and `claude-fable-5` (genuine Claude)
+
+Rounded out all five identity-probed Claude-namespace entries by testing
+the last two on both tasks.
+
+**Narration**: both excellent, and strikingly similar in style to each
+other and to `claude-opus-5`/`claude-sonnet-4-6` above --
+`claude-opus-4-6`/Kiro scored **1.0 coverage on `prep`, `apply`, and
+`done`**, explicitly naming "ancilla" and phase kickback correctly and
+precisely throughout. `claude-fable-5` (genuine Claude) was equally
+strong conceptually -- also correctly explains phase kickback and
+ancilla preparation in `init`/`prep`/`apply` -- though its `done` slice
+scored lower (0.25) by not using the specific words "phase"/"amplitude"/
+"basis" despite the underlying explanation being accurate.
+
+**Agentic tool-planning**: both cleared cleanly. `claude-opus-4-6`/Kiro:
+7 tool calls, 0 errors, ~21s, ending in a clean markdown table and correct
+answer. `claude-fable-5`: 3 tool calls, 0 errors, ~18.5s -- the leanest,
+most direct trace of any Claude-namespace test (`run_circuit` x2 then
+straight to `compare_resource_cost`, no redundant `get_slice_facts`
+calls), matching `gemini-3.1-pro-high`'s efficiency.
+
+### Refined hypothesis after testing all five
+
+Every single Claude-namespace entry tested -- the four confirmed-Kiro
+ones and the one confirmed-genuine one -- produced narration of
+comparable, consistently high quality: correct "ancilla" terminology,
+accurate unprompted phase-kickback explanations, appropriate hedging
+about unstated facts. That similarity across identities that
+self-report as two different products is itself a data point. The
+simplest explanation isn't "Kiro is a worse imitation" -- the outputs
+aren't distinguishable in quality -- it's that **Kiro is very plausibly
+built on a genuine Claude backend**, with the "Kiro" persona coming from
+a product-level system prompt rather than a different underlying model.
+If true, the aggregator's actual failure isn't serving fake output --
+it's that requesting "claude-opus-5" through this reseller doesn't
+reliably get you a raw Claude API call; it may get you a Claude-backed
+product with its own persona and its own agentic reliability
+characteristics (see `claude-sonnet-4-6`'s instant failure above) bolted
+on top. That's a different, more precise problem than "this is fake," and
+worth stating that way rather than the cruder version.
+
+### Why this identity-probe step matters beyond this one aggregator
+
+The single-request self-identification probe ("what model are you, who
+trained you, say what you're not sure of") that surfaced all of this cost
+a few hundred tokens per model and ran in seconds -- far cheaper than the
+narration/agentic tests it justified re-scoping. It's a reusable check
+for anyone routing through a third-party aggregator or proxy: before
+trusting a benchmark result against a named model, ask the model who it
+is. A mismatch is a concrete, verifiable finding (not a vibe), and it
+changes what a result is actually evidence of -- "what this named
+endpoint serves" versus "how the real model performs" are different
+claims, and conflating them would have made every result in this section
+misleading in a way that looked authoritative. Worth treating as a
+standard first step whenever a new aggregator/proxy enters this kind of
+comparison, not a one-off precaution specific to this vendor.
+
+## gpt-5.4 and gpt-5.4-mini: plain narration test
+
+Same Deutsch-Jozsa-`xor` narration comparison used for every local model.
+Both models produced the strongest results in this entire file:
+
+- **Correctly parsed `x=1` as a literal X gate**, unlike
+  `phi4-mini-reasoning:3.8b` and `llama3.1:8b`, which both hallucinated
+  "Hadamard" from the same key.
+- **Explicitly declined to guess unstated facts** rather than filling
+  gaps with plausible-sounding invention -- e.g. `gpt-5.4-mini` on
+  `apply`: *"the exact oracle action is not stated here"*; `gpt-5.4` on
+  `init`: *"anything more detailed would be a guess."* This is exactly
+  the grounding behavior `ai_narrator.py`'s design intends and no local
+  model matched consistently across all five slices.
+- **`gpt-5.4`'s `done` slice scored 1.0 coverage while staying fully
+  accurate** -- it names Hadamard, phase, amplitude, and basis correctly
+  in a description that also matches the real physics (a basis change
+  converting oracle-imprinted phase into a readable amplitude pattern).
+  First perfect-coverage result in this file that isn't also a
+  correctness problem in disguise (contrast with `qwen2.5:7b`'s
+  higher-coverage-but-wrong `apply` narration earlier).
+- `gpt-5.4-mini` was very slightly weaker on hedged precision (e.g.
+  `apply`: *"the state remains separable even though the slice used
+  entangling gates internally"* -- correct, but doesn't explicitly name
+  phase kickback the way it could) but made no factual errors either.
+
+Net, subject to the trust caveat above: whatever ModelProxy actually
+served under `gpt-5.4`/`gpt-5.4-mini` handled this task better than any
+locally-run model tested, on both axes that matter -- avoiding invented
+facts, and correctly reading structured input that tripped up two
+different local models on the same key.
+
+## gpt-5.4: agentic tool-planning test
+
+Same Deutsch-Jozsa question used for every local model's agentic run.
+`run_agent()` (the Anthropic-shaped function) can't be reused as-is
+against an OpenAI-compatible endpoint -- OpenAI's tool_calls carry a real
+`id` that the follow-up tool-result message must reference via
+`tool_call_id`, unlike Ollama's format (no ids, matched by `name`
+instead) or Anthropic's own content-block shape. Added
+`run_agent_aggregator()` to `agentic_analyst.py` to speak that dialect
+directly, reusing `_tool_schemas_to_ollama()` for the schema conversion
+(OpenAI and Ollama's tool-call JSON shape happen to match) and
+`_make_dispatch()` for tool execution -- same guarded tool surface as
+every other backend, just different request/response plumbing.
+
+Result: **9 tool calls, 0 errors, ~18s total** -- the most thorough,
+correctly-sequenced trace recorded in this entire file:
+
+```
+list_oracles()
+run_circuit(oracle='0')
+run_circuit(oracle='xor')
+compare_resource_cost(oracle_a='0', oracle_b='xor')
+get_slice_facts(oracle='0', label='apply')
+get_slice_facts(oracle='xor', label='apply')
+get_slice_facts(oracle='0', label='prep')
+get_slice_facts(oracle='xor', label='prep')
+get_slice_facts(oracle='0', label='final')
+get_slice_facts(oracle='xor', label='final')
+```
+
+Unlike every local model tested, this run **did** call `list_oracles`
+first despite the oracle names already being in the question (belt and
+suspenders, not strictly needed but not wrong either), **did** use
+`compare_resource_cost` directly rather than reinventing the comparison,
+and then followed up with targeted `get_slice_facts` calls to verify the
+comparison tool's summary against per-slice detail before answering.
+Final answer is precise and fully grounded, including a subtle correct
+observation none of the local models articulated: *"despite `xor` using
+3 CNOTs, the reported entanglement at the end of `apply` is still
+empty, so the extra cost comes from entangling operations, not from a
+persistently entangled post-oracle state"* -- correctly distinguishing
+gate cost from entanglement outcome, which is exactly the phase-kickback
+subtlety noted in `q/README.md`.
+
+Net, subject to the trust caveat above: whatever ModelProxy served under
+`gpt-5.4` was the cleanest, most thorough agentic run in this whole
+comparison -- better than any local model on both planning efficiency
+(no wasted tool calls, no wrong-order mistakes) and depth of grounded
+detail in the final answer.
+
+## gpt-5.4-mini: agentic tool-planning test
+
+Same question, `run_agent_aggregator()`. **5 tool calls, 0 errors, ~15s**:
+
+```
+list_oracles()
+run_circuit(oracle='0')
+run_circuit(oracle='xor')
+compare_resource_cost(oracle_a='0', oracle_b='xor')
+get_slice_facts(oracle='0', label='apply')
+get_slice_facts(oracle='xor', label='apply')
+```
+
+Even leaner than `gpt-5.4`'s trace: it only drilled into the one slice
+that actually differs (`apply`) rather than also re-verifying `prep`/
+`final`, which `compare_resource_cost` had already confirmed were
+identical. Correct final answer, and it explicitly named the boundary of
+what it could conclude: *"I can't say more about the exact logical
+mapping of those gates without the raw circuit, but the tool evidence is
+clear about where the resource increase occurs"* -- precisely the
+"say so explicitly if a question can't be answered from the tools
+available" instruction in `AGENT_SYSTEM_PROMPT`, applied correctly.
+
+Net: both `gpt-5.4` and `gpt-5.4-mini` (under the trust caveat) cleared
+the agentic task with zero errors, correct tool ordering, direct use of
+`compare_resource_cost`, and grounded final answers that stayed within
+the boundary of available evidence -- something no local model achieved
+consistently across both the narration and agentic tests. The mini
+variant was actually the more efficient planner of the two here (fewer,
+more targeted calls), which is itself a useful data point: bigger doesn't
+automatically mean a better plan, at least for a task this narrow.
+
+## gemini-3.1-pro-high and gemini-3.5-flash: both tasks
+
+### Narration
+
+Same Deutsch-Jozsa-`xor` comparison. Both correctly parsed `x=1` as a
+literal X gate (no Hadamard misread -- consistent with every other
+frontier model tested, none of which made that mistake). `gemini-3.1-pro-high`
+was the strongest narrator of any model in this file: on `apply`, without
+ever using the words "phase kickback," it correctly explains *"this lack
+of entanglement occurs because the oracle's logic is encoded purely as
+phase shifts... rather than creating classical correlations between the
+qubits"* -- a fully accurate restatement of the actual mechanism in its
+own words, and it also correctly flagged an unstated fact rather than
+guessing: *"the provided data does not specify what that previous gate
+was."* `gemini-3.5-flash` was accurate throughout but noticeably more
+surface-level -- restates the given numbers correctly without added
+interpretive depth, no errors but less insight than its own "pro" sibling
+or than `gpt-5.4`.
+
+### Agentic tool-planning
+
+Both cleared it with zero errors:
+
+- **`gemini-3.1-pro-high`**: 3 tool calls (`run_circuit` x2,
+  `compare_resource_cost`) -- the leanest trace of any model tested in
+  this entire file, local or frontier. ~16s, correct and precise answer.
+- **`gemini-3.5-flash`**: 6 tool calls (`list_oracles`, `run_circuit` x2,
+  `compare_resource_cost`, `get_slice_facts` x2 on `apply`). ~8s, the
+  fastest run recorded here. Correct answer, and it went a step further
+  than most: it separately reported *cumulative* gate totals for the
+  whole circuit (8 vs. 11) alongside the `apply`-slice difference,
+  correctly reading `cumulative_total_gates` from the tool output rather
+  than just the per-slice numbers asked about.
+
+## Cross-tier summary (subject to the trust caveat on the aggregator section)
+
+| Model | Tier | Narration | Agentic planning |
+|---|---|---|---|
+| qwen3.5:9b | local | Accurate, low coverage on vocab-sparse slices | Consistently clean across multiple runs |
+| qwen2.5:7b | local | Accurate mostly, one entanglement self-contradiction | Clean plan, one confidently-wrong data misread |
+| llama3.1:8b | local | Hadamard misread on `init`, otherwise fine | Non-deterministic: one clean run, one broken recovery |
+| phi4-mini-reasoning:3.8b | local | Needs 3500+ tokens; Hadamard misread even when it finishes | Never calls tools at all |
+| deepseek-r1:8b | local | Slow but solid once given enough budget; no Hadamard misread | Untested -- impractically slow per-turn on this hardware |
+| gemma2:9b | local | Solid, cautious, no errors | Hard rejection -- no tool-calling support in Ollama's template |
+| gpt-5.4 | aggregator | Best-in-file: perfect coverage + fully accurate | 9 calls, 0 errors, most thorough trace, subtle correct physics aside |
+| gpt-5.4-mini | aggregator | Accurate, slightly less hedged precision than gpt-5.4 | 5 calls, 0 errors, leaner than gpt-5.4, correctly bounded its claims |
+| gemini-3.1-pro-high | aggregator | Best mechanism explanation in the file, in its own words | 3 calls, 0 errors -- leanest trace of any model tested |
+| gemini-3.5-flash | aggregator | Accurate but surface-level | 6 calls, 0 errors, fastest run, caught cumulative totals unprompted |
+| "claude-opus-5" (**actually Kiro, not Claude**) | aggregator, mislabeled | 1.0 coverage on 2 of 5 slices, best-in-file phase-kickback explanation | 10 calls, 0 errors -- single most thorough trace in the file |
+| "claude-sonnet-4-6" (**actually Kiro, not Claude**) | aggregator, mislabeled | Only model in the file to correctly say "ancilla" unprompted | 0 calls -- stated a plan, never executed it, failed in 3.2s |
+| "claude-opus-4-6" (**actually Kiro, not Claude**) | aggregator, mislabeled | 1.0 coverage on 3 of 5 slices, correct ancilla/phase-kickback throughout | 7 calls, 0 errors, clean markdown-table answer |
+| "claude-fable-5" (**self-identified as genuine Claude**) | aggregator, likely genuine | Correct ancilla/phase-kickback explanation, slightly lower coverage on `done` | 3 calls, 0 errors -- leanest Claude-namespace trace, matches gemini-3.1-pro-high's efficiency |
+
+The clearest overall pattern: every model reachable through the
+aggregator cleared both tasks with zero errors, while the six local
+models spanned the entire range from "consistently reliable"
+(qwen3.5:9b) to "structurally can't do this" (gemma2:9b's tool-calling
+rejection) to "confidently fabricates a wrong circuit" (phi4-mini-reasoning).
+That gap is itself the most portfolio-relevant finding in this whole file:
+a narrow, guarded agentic tool-use loop is a much more sensitive
+instrument for separating model capability than a single narration
+question is -- every local model produced *some* plausible-looking
+narration, but only two of six could be trusted to plan tool calls
+correctly and consistently. Whether that gap is "frontier vs. local" in
+general or an artifact of what this specific aggregator actually serves
+under these names remains genuinely unverified, per the trust caveat
+opening this section.

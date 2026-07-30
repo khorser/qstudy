@@ -368,3 +368,80 @@ def run_agent_ollama(base_url, algo, question, model, max_steps=8, verbose=True,
             messages.append({"role": "tool", "name": name, "content": json.dumps(result)})
 
     return "[max_steps reached without a final answer]", trace
+
+
+def run_agent_aggregator(base_url, api_key, algo, question, model, max_steps=8, verbose=True,
+                          timeout=180):
+    """OpenAI-compatible-API equivalent of run_agent()/run_agent_ollama(),
+    for aggregators (e.g. "ModelProxy," a pseudonym -- see
+    agentic_testing_notes.md) that speak real OpenAI tool-calling
+    semantics over /chat/completions -- distinct from run_agent_ollama()
+    because OpenAI's tool_calls carry a real "id" that the follow-up tool
+    message must reference via "tool_call_id"; Ollama's format omits ids
+    entirely and matches by "name" instead, so the two aren't
+    interchangeable despite looking similar. See agentic_testing_notes.md
+    for trust caveats about what a given aggregator model name actually
+    routes to -- this function doesn't verify that.
+    """
+    import requests
+
+    tools = CircuitAnalystTools(algo)
+    dispatch = _make_dispatch(tools)
+    openai_tools = _tool_schemas_to_ollama(TOOL_SCHEMAS)  # same shape OpenAI expects
+
+    messages = [
+        {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+        {"role": "user", "content": question},
+    ]
+    trace = []
+
+    for _ in range(max_steps):
+        resp = requests.post(
+            f"{base_url.rstrip('/')}/chat/completions",
+            json={
+                "model": model,
+                "messages": messages,
+                "tools": openai_tools,
+            },
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        message = data["choices"][0]["message"]
+        tool_calls = message.get("tool_calls") or []
+        content = message.get("content") or ""
+
+        assistant_msg = {"role": "assistant", "content": content}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+        messages.append(assistant_msg)
+
+        if not tool_calls:
+            return content, trace
+
+        for call in tool_calls:
+            fn_info = call.get("function", {})
+            name = fn_info.get("name")
+            try:
+                args = json.loads(fn_info.get("arguments") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            fn = dispatch.get(name)
+            if fn is None:
+                result = {"error": f"unknown tool {name}"}
+            else:
+                try:
+                    result = fn(**args)
+                except Exception as e:
+                    result = {"error": str(e)}
+            trace.append((name, args, result))
+            if verbose:
+                print(f"[tool call] {name}({args}) -> {json.dumps(result)[:200]}")
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call.get("id"),
+                "content": json.dumps(result),
+            })
+
+    return "[max_steps reached without a final answer]", trace
