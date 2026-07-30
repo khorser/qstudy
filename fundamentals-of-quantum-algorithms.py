@@ -991,5 +991,4 @@ CircuitSlicer(Grover(6, 16), 4, diag=False, common_factors=False);
 from ollama_client import OllamaClient
 from ai_circuit_slicer import AICircuitSlicer
 
-client = OllamaClient(base_url="http://localhost:11434")
-s = AICircuitSlicer(DeutschJozsa(3), anthropic_client=client, model="llama3.1")
+s = AICircuitSlicer(DeutschJozsa(3))
