@@ -4,6 +4,8 @@ into an AI-Assisted Slicer with Resource Estimation and Grounded Narration.
 
 You will need Jupytext to convert notebooks back to .ipynb using a command like `jupytext --to notebook fundamentals-of-quantum-algorithms.py`
 
+https://github.com/user-attachments/assets/d5b502dc-6c89-4bd9-929e-06d4391da9dd
+
 ## Where this started
 
 `CircuitSlicer` (in `qstudy.py`) wasn't built as a product — it grew out of
