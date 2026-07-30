@@ -39,7 +39,8 @@ class AICircuitSlicer(CircuitSlicer):
         anthropic_client: if given, pins the backend to this exact client
         object (skips the in-widget backend selector's client-building --
         useful for scripts/tests). Leave None to get a live "Backend" /
-        "Model" / "Ollama URL" selector in the widget instead.
+        "Model" / per-backend connection-field selector in the widget
+        instead (Anthropic, Ollama, or an OpenAI-compatible aggregator).
         """
         self._explicit_client = anthropic_client
         self.algo_description = algo_description or getattr(algo, "__doc__", "") or ""
@@ -50,13 +51,16 @@ class AICircuitSlicer(CircuitSlicer):
         self.ai_button.on_click(self._on_ai_explain)
 
         self.backend_dropdown = widgets.Dropdown(
-            options=["Anthropic", "Ollama"], value="Anthropic", description="Backend:"
+            options=["Anthropic", "Ollama", "OpenAI-compatible"],
+            value="Anthropic", description="Backend:"
         )
-        self.anthropic_model_dropdown = widgets.Dropdown(
+        self.anthropic_model_combo = widgets.Combobox(
             options=self._ANTHROPIC_MODELS,
             value=model if model in self._ANTHROPIC_MODELS else self._ANTHROPIC_MODELS[0],
-            description="Model:",
+            description="Model:", ensure_option=False,
         )
+        self.anthropic_refresh_button = widgets.Button(description="Refresh models")
+        self.anthropic_status = widgets.HTML(value="")
         self.ollama_model_dropdown = widgets.Dropdown(
             options=["(click Refresh)"], value="(click Refresh)", description="Model:",
             layout=widgets.Layout(display="none"),
@@ -69,8 +73,26 @@ class AICircuitSlicer(CircuitSlicer):
             description="Refresh models", layout=widgets.Layout(display="none"),
         )
         self.ollama_status = widgets.HTML(value="", layout=widgets.Layout(display="none"))
+        self.aggregator_model_combo = widgets.Combobox(
+            options=[], value="", description="Model:", ensure_option=False,
+            layout=widgets.Layout(display="none"),
+        )
+        self.aggregator_url_text = widgets.Text(
+            value="", placeholder="(uses AGGREGATOR_BASE_URL if blank)",
+            description="Aggregator URL:", layout=widgets.Layout(display="none"),
+        )
+        self.aggregator_key_text = widgets.Password(
+            value="", placeholder="(uses ANTHROPIC_API_KEY if blank)",
+            description="Aggregator Key:", layout=widgets.Layout(display="none"),
+        )
+        self.aggregator_refresh_button = widgets.Button(
+            description="Refresh models", layout=widgets.Layout(display="none"),
+        )
+        self.aggregator_status = widgets.HTML(value="", layout=widgets.Layout(display="none"))
         self.backend_dropdown.observe(self._on_backend_change, names="value")
+        self.anthropic_refresh_button.on_click(self._on_anthropic_refresh)
         self.ollama_refresh_button.on_click(self._on_ollama_refresh)
+        self.aggregator_refresh_button.on_click(self._on_aggregator_refresh)
 
         super().__init__(algo, *args, **kwargs)
 
@@ -78,10 +100,15 @@ class AICircuitSlicer(CircuitSlicer):
         self.tab.children += (self.resources,)
         self.tab.set_title(len(self.tab.children) - 1, "Resources")
         ai_controls = widgets.VBox([
-            widgets.HBox([self.backend_dropdown, self.anthropic_model_dropdown,
-                          self.ollama_model_dropdown, self.ollama_url_text,
-                          self.ollama_refresh_button]),
+            widgets.HBox([self.backend_dropdown,
+                          self.anthropic_model_combo, self.anthropic_refresh_button,
+                          self.ollama_url_text, self.ollama_model_dropdown,
+                          self.ollama_refresh_button,
+                          self.aggregator_url_text, self.aggregator_key_text,
+                          self.aggregator_model_combo, self.aggregator_refresh_button]),
+            self.anthropic_status,
             self.ollama_status,
+            self.aggregator_status,
         ])
         self.out.children += (ai_controls, widgets.HBox([self.ai_button]), self.ai_output)
 
@@ -89,12 +116,48 @@ class AICircuitSlicer(CircuitSlicer):
 
     def _on_backend_change(self, change):
         backend = change["new"]
+        is_anthropic = backend == "Anthropic"
         is_ollama = backend == "Ollama"
-        self.anthropic_model_dropdown.layout.display = "none" if is_ollama else ""
+        is_aggregator = backend == "OpenAI-compatible"
+        # Clear any stale status message left over from a previous backend
+        # (e.g. an error from a prior Refresh click) so switching backends
+        # doesn't show leftover text from a backend that's no longer selected.
+        for status in (self.anthropic_status, self.ollama_status, self.aggregator_status):
+            status.value = ""
+            status.layout.display = "none"
+        for w in (self.anthropic_model_combo, self.anthropic_refresh_button):
+            w.layout.display = "" if is_anthropic else "none"
         for w in (self.ollama_model_dropdown, self.ollama_url_text, self.ollama_refresh_button):
             w.layout.display = "" if is_ollama else "none"
+        for w in (self.aggregator_model_combo, self.aggregator_url_text,
+                  self.aggregator_key_text, self.aggregator_refresh_button):
+            w.layout.display = "" if is_aggregator else "none"
         if is_ollama and self.ollama_model_dropdown.value == "(click Refresh)":
             self._on_ollama_refresh(None)
+        if is_aggregator and not self.aggregator_model_combo.options:
+            self._on_aggregator_refresh(None)
+
+    def _on_anthropic_refresh(self, _b):
+        client, err = self._build_client()
+        if err is not None:
+            self.anthropic_status.layout.display = ""
+            self.anthropic_status.value = f"<i>{err}</i>"
+            return
+        try:
+            models = sorted(m.id for m in client.models.list())
+        except Exception as e:
+            self.anthropic_status.layout.display = ""
+            self.anthropic_status.value = f"<i>Could not list Anthropic models: {e}</i>"
+            return
+        if not models:
+            self.anthropic_status.layout.display = ""
+            self.anthropic_status.value = "<i>Anthropic API reachable but returned no models</i>"
+            return
+        self.anthropic_status.layout.display = "none"
+        self.anthropic_status.value = ""
+        self.anthropic_model_combo.options = models
+        if self.anthropic_model_combo.value not in models:
+            self.anthropic_model_combo.value = models[0]
 
     def _on_ollama_refresh(self, _b):
         from ollama_client import list_ollama_models
@@ -112,11 +175,34 @@ class AICircuitSlicer(CircuitSlicer):
         self.ollama_model_dropdown.options = models
         self.ollama_model_dropdown.value = models[0]
 
+    def _on_aggregator_refresh(self, _b):
+        from aggregator_client import list_aggregator_models
+        try:
+            models = list_aggregator_models(
+                base_url=self.aggregator_url_text.value or None,
+                api_key=self.aggregator_key_text.value or None,
+            )
+        except Exception as e:
+            self.aggregator_status.layout.display = ""
+            self.aggregator_status.value = f"<i>Could not list aggregator models: {e}</i>"
+            return
+        if not models:
+            self.aggregator_status.layout.display = ""
+            self.aggregator_status.value = "<i>Aggregator reachable but returned no models</i>"
+            return
+        self.aggregator_status.layout.display = "none"
+        self.aggregator_model_combo.options = models
+        if self.aggregator_model_combo.value not in models:
+            self.aggregator_model_combo.value = models[0]
+
     @property
     def _current_model(self):
-        if self.backend_dropdown.value == "Ollama":
+        backend = self.backend_dropdown.value
+        if backend == "Ollama":
             return self.ollama_model_dropdown.value
-        return self.anthropic_model_dropdown.value
+        if backend == "OpenAI-compatible":
+            return self.aggregator_model_combo.value
+        return self.anthropic_model_combo.value
 
     def _build_client(self):
         """Returns (client, error_message). error_message is None on success."""
@@ -133,6 +219,15 @@ class AICircuitSlicer(CircuitSlicer):
                 return anthropic.Anthropic(), None
             except Exception as e:
                 return None, f"Could not create Anthropic client (check ANTHROPIC_API_KEY): {e}"
+        elif backend == "OpenAI-compatible":
+            from aggregator_client import AggregatorClient
+            try:
+                return AggregatorClient(
+                    base_url=self.aggregator_url_text.value or None,
+                    api_key=self.aggregator_key_text.value or None,
+                ), None
+            except Exception as e:
+                return None, f"Could not create aggregator client: {e}"
         else:
             from ollama_client import OllamaClient
             return OllamaClient(base_url=self.ollama_url_text.value), None

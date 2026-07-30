@@ -76,3 +76,26 @@ class AggregatorClient:
             )
         self.timeout = timeout
         self.messages = _Messages(self)
+
+
+def list_aggregator_models(base_url=None, api_key=None, timeout=10):
+    """Returns a list of model ids the aggregator reports via its
+    OpenAI-compatible GET {base_url}/models endpoint. Raises if the
+    aggregator isn't reachable or misconfigured -- callers should catch
+    and show a friendly message rather than let this propagate into a
+    dead dropdown."""
+    base_url = base_url or os.environ.get("AGGREGATOR_BASE_URL")
+    if not base_url:
+        raise ValueError("No base URL -- pass base_url= or set AGGREGATOR_BASE_URL.")
+    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("No API key -- pass api_key= or set ANTHROPIC_API_KEY.")
+    resp = requests.get(
+        f"{base_url.rstrip('/')}/models",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    ids = [m.get("id") for m in data.get("data", [])]
+    return sorted(i for i in ids if i)
