@@ -1,5 +1,5 @@
 # qstudy
-My quantum computing studies grown out into a generic CirquitSlicer and then
+My quantum computing studies grown out into a generic CircuitSlicer and then
 into an AI-Assisted Slicer with Resource Estimation and Grounded Narration.
 
 You will need Jupytext to convert notebooks back to .ipynb using a command like `jupytext --to notebook fundamentals-of-quantum-algorithms.py`
@@ -48,7 +48,7 @@ being explicit about, and it's part of why gate/depth-based resource
 counting (below) matters in the first place: it's a proxy you *can*
 compute without needing to observe anything.
 
-# AI-Assisted CircuitSlicer: Resource Estimation + Grounded Narration
+## AI-Assisted CircuitSlicer: Resource Estimation + Grounded Narration
 
 An additive extension to `qstudy.py`'s `CircuitSlicer` — an interactive,
 barrier-delimited circuit-stepping tool already used across your
@@ -56,38 +56,14 @@ Deutsch-Jozsa, Bernstein-Vazirani, Simon, Grover, and teleportation demos.
 `qstudy.py` is untouched; everything here is a subclass + standalone
 analysis modules layered on top.
 
-## What's new
-
-**`resource_stats.py`** — a static resource-estimation pass over the same
-barrier-delimited slices CircuitSlicer already uses. For each slice it
-reports gate counts by type, circuit depth, and entangling (>=2-qubit) gate
-count, both per-slice and cumulative. Custom/opaque gates (e.g. an oracle
-appended via `.to_gate()`) are unrolled to primitives before counting — a
-first pass without this reported `circuit-42: 1` for the whole oracle,
-which is exactly the kind of hidden-cost problem a resource estimator has
-to catch. Standard gates (h, x, cx, ...) are deliberately left alone so
-counts stay readable.
-
-**`ai_narrator.py`** — builds a prompt from *only* facts already computed
-by CircuitSlicer / resource_stats (gate counts, entanglement entropy,
-purity, depth) and asks Claude to narrate what a slice does and why. The
-LLM never sees the raw circuit and is explicitly told not to invent
-numbers beyond what's given — grounding by construction, not by
-instruction alone. Includes a small hand-written reference (expert
-baseline) for the Deutsch-Jozsa/Bernstein-Vazirani slices and a coverage
-scorer, tested to confirm it scores the reference itself at 1.0 and a
-deliberately vague narration at 0.0 — a cheap first pass at "benchmark
-against an expert baseline," worth extending once there's a second
-algorithm to compare against.
-
-## What's new (and who wrote it)
+### What's new (and who wrote it)
 
 Everything below — `resource_stats.py`, `ai_narrator.py`,
-`ai_circuit_slicer.py`, `ollama_client.py`, `headless_facts.py`,
-`compare_backends.py` — was written with Claude, in a working session
-where each piece was actually run and checked rather than written blind
-(see "Verified, not just written" below). `qstudy.py` itself is untouched;
-everything here is additive.
+`agentic_analyst.py`, `ai_circuit_slicer.py`, `aggregator_client.py`,
+`ollama_client.py`, `headless_facts.py`, `compare_backends.py`,
+`compare_agent_backends.py` — was written with Claude, in a working
+session where each piece was actually run and checked rather than written
+blind (see "Verified, not just written" below).
 
 **`resource_stats.py`** — a static resource-estimation pass over the same
 barrier-delimited slices CircuitSlicer already uses. For each slice it
@@ -109,12 +85,33 @@ baseline) for the Deutsch-Jozsa/Bernstein-Vazirani slices and a coverage
 scorer, tested to confirm it scores the reference itself at 1.0 and a
 deliberately vague narration at 0.0.
 
+**`agentic_analyst.py`** — the open-ended counterpart to `ai_narrator.py`.
+Instead of a fixed prompt over one slice's facts, the model gets a small
+set of tools (`list_oracles` / `run_circuit` / `get_slice_facts` /
+`compare_resource_cost`) and an open-ended question, and has to plan its
+own multi-step investigation — genuine tool-call planning, not a template,
+though still narrow: no arbitrary code execution, just those four
+known-safe primitives. `run_agent` / `run_agent_ollama` /
+`run_agent_aggregator` cover Anthropic's, Ollama's, and OpenAI-style
+tool-calling shapes respectively (the latter two aren't interchangeable —
+OpenAI-style `tool_calls` carry an id that the follow-up message must
+reference; Ollama's doesn't).
+
 **`ai_circuit_slicer.py`** — `AICircuitSlicer(CircuitSlicer)`: adds a
 "Resources" tab and an "AI Explain this slice" button, plus an in-widget
-backend selector (Anthropic model dropdown, or Ollama with a "Refresh
-models" button that queries your local server's installed tags directly —
-no more guessing exact model tags). Degrades gracefully with no API
+backend selector across three backends — Anthropic, a local Ollama
+server, or an OpenAI-compatible aggregator — each with its own "Refresh
+models" button that queries the real, current model list live (Anthropic's
+`models.list()`, Ollama's installed tags, or the aggregator's `/models`)
+instead of guessing model names. Degrades gracefully with no API
 key/server configured.
+
+**`aggregator_client.py`** — duck-types the same client interface as
+`ollama_client.py`, but speaks an OpenAI-compatible `/chat/completions` +
+`/models` API instead, for testing narration against a third-party model
+aggregator. Deliberately takes `base_url`/`api_key` as parameters (or
+`AGGREGATOR_BASE_URL`/`ANTHROPIC_API_KEY` env vars) rather than hardcoding
+a hostname.
 
 **`ollama_client.py`** — duck-types just enough of the Anthropic client
 interface to run `ai_narrator` against a local Ollama model instead.
@@ -140,7 +137,21 @@ local Ollama model side by side, scores both against the hand-written
 reference, and prints a coverage table plus narration-by-narration
 comparison. Either backend is skipped gracefully if unreachable.
 
-## Verified, not just written
+**`compare_agent_backends.py`** — the `agentic_analyst.py` equivalent:
+runs the same open-ended question through Claude and a local Ollama model
+and compares the *traces* (step count, which tools got used, whether
+anything errored), since unlike narration there's no single "correct"
+answer to score against.
+
+`agentic_testing_notes.md` logs a much broader run of both scripts against
+six local Ollama models and, via the aggregator above, several frontier
+models (GPT-5.4, Gemini 3.1/3.5). The standout finding: most of the
+aggregator's `claude-*`-labeled endpoints turned out to self-identify as
+"Kiro" (an AWS product) rather than Claude when asked directly — the notes
+document the identity-probe technique that caught this, worth reusing
+before trusting any aggregator's named-model results again.
+
+### Verified, not just written
 
 Ran end-to-end against a reconstructed `DeutschJozsa` class:
 - oracle-gate resolution: `f_xor` oracle correctly resolves from an opaque
@@ -159,8 +170,14 @@ Ran end-to-end against a reconstructed `DeutschJozsa` class:
 - `compare_backends.py` run end-to-end under plain `python3` (no IPython)
   against mocked Anthropic + Ollama responses, confirming it no longer
   needs a notebook/display context after the `headless_facts.py` rewrite
+- all three backends (Anthropic, Ollama, and the OpenAI-compatible
+  aggregator) driven live in a running Jupyter widget: a real Ollama
+  chat-completion call, a real Anthropic 401 from an invalid credential
+  (confirming the request actually reaches Anthropic's API, not just that
+  errors are handled), and a full aggregator round trip — URL/key entry,
+  live model-list refresh, and a genuine grounded narration back
 
-## Usage
+### Usage
 
 Interactive, in a notebook:
 ```python
@@ -171,8 +188,8 @@ s = AICircuitSlicer(DeutschJozsa(3),
                                        "is constant or balanced using a "
                                        "single query.")
 ```
-Pick a backend (Anthropic or Ollama) from the dropdown, step through
-slices, click "AI Explain this slice."
+Pick a backend (Anthropic, Ollama, or an OpenAI-compatible aggregator)
+from the dropdown, step through slices, click "AI Explain this slice."
 
 Headless, from the command line:
 ```bash
