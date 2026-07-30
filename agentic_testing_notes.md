@@ -751,21 +751,32 @@ narration results:
   ("the tools don't expose qubit indices or the circuit itself, so I
   can't confirm the wiring directly"), and an unprompted offer to extend
   the comparison to the other two oracles it hadn't been asked about.
-- `claude-sonnet-4-6`/Kiro failed almost instantly -- **3.2s, zero tool
-  calls**, final answer was only *"Let me start by listing the available
-  oracles, then simulate both and compare them"* -- a stated intention
-  with no actual tool call behind it, closer to `llama3.1:8b`'s
-  "wrote the tool call as text instead of calling it" failure than to
-  `phi4-mini-reasoning`'s full hallucination, but even more minimal (no
-  fabricated content at all, just an unexecuted plan).
+- `claude-sonnet-4-6`/Kiro **first attempt** failed almost instantly --
+  **3.2s, zero tool calls**, final answer was only *"Let me start by
+  listing the available oracles, then simulate both and compare them"* --
+  a stated intention with no actual tool call behind it, closer to
+  `llama3.1:8b`'s "wrote the tool call as text instead of calling it"
+  failure than to `phi4-mini-reasoning`'s full hallucination, but even
+  more minimal (no fabricated content at all, just an unexecuted plan).
+  **Re-ran the identical question and it completely reversed**: 13 tool
+  calls, 0 errors, ~27s -- worked through every slice for both oracles
+  individually (not just the `compare_resource_cost` summary) and
+  produced one of the most thorough, best-formatted final answers in this
+  entire file, complete with a full comparison table and a precise
+  closing explanation. So this isn't a stable "broken under this label"
+  result -- it's run-to-run non-determinism, the same category as
+  `llama3.1:8b` above, just with a much wider gap between its worst and
+  best outcome (complete non-attempt vs. the most exhaustive trace
+  recorded anywhere in this file).
 
 Net: even setting the mislabeling issue aside, "Kiro" (whatever it is) is
-not uniformly reliable either -- excellent under one requested label,
-broken under another, on the identical question. That inconsistency is
-itself informative and consistent with the rest of this file's overall
-finding: model identity and quality varies a lot even within what looks
-like "the same system," and a single test run is never enough to
-characterize any of these.
+not uniformly reliable either -- excellent on one run, a complete
+non-attempt on another, for the identical question and label. That
+inconsistency is itself informative and consistent with the rest of this
+file's overall finding: model identity and quality varies a lot even
+within what looks like "the same system," and **a single test run is
+never enough to characterize any of these** -- confirmed directly here by
+re-running and getting the opposite result.
 
 ### The remaining two: `claude-opus-4-6` (Kiro) and `claude-fable-5` (genuine Claude)
 
@@ -988,7 +999,7 @@ Both cleared it with zero errors:
 | gemini-3.1-pro-high | aggregator | Best mechanism explanation in the file, in its own words | 3 calls, 0 errors -- leanest trace of any model tested |
 | gemini-3.5-flash | aggregator | Accurate but surface-level | 6 calls, 0 errors, fastest run, caught cumulative totals unprompted |
 | "claude-opus-5" (**actually Kiro, not Claude**) | aggregator, mislabeled | 1.0 coverage on 2 of 5 slices, best-in-file phase-kickback explanation | 10 calls, 0 errors -- single most thorough trace in the file |
-| "claude-sonnet-4-6" (**actually Kiro, not Claude**) | aggregator, mislabeled | Only model in the file to correctly say "ancilla" unprompted | 0 calls -- stated a plan, never executed it, failed in 3.2s |
+| "claude-sonnet-4-6" (**actually Kiro, not Claude**) | aggregator, mislabeled | Only model in the file to correctly say "ancilla" unprompted | Non-deterministic: 1st run 0 calls/failed in 3.2s, 2nd run 13 calls/0 errors/most thorough answer in the file |
 | "claude-opus-4-6" (**actually Kiro, not Claude**) | aggregator, mislabeled | 1.0 coverage on 3 of 5 slices, correct ancilla/phase-kickback throughout | 7 calls, 0 errors, clean markdown-table answer |
 | "claude-fable-5" (**self-identified as genuine Claude**) | aggregator, likely genuine | Correct ancilla/phase-kickback explanation, slightly lower coverage on `done` | 3 calls, 0 errors -- leanest Claude-namespace trace, matches gemini-3.1-pro-high's efficiency |
 
