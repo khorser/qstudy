@@ -31,7 +31,8 @@ class _Messages:
     def __init__(self, client):
         self._client = client
 
-    def create(self, model, max_tokens=None, system=None, messages=None, **kwargs):
+    def create(self, model, max_tokens=None, system=None, messages=None,
+               temperature=None, **kwargs):
         payload_messages = []
         if system:
             payload_messages.append({"role": "system", "content": system})
@@ -43,6 +44,8 @@ class _Messages:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if temperature is not None:
+            payload["temperature"] = temperature
 
         resp = requests.post(
             f"{self._client.base_url}/chat/completions",

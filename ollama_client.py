@@ -76,7 +76,7 @@ class _Messages:
         self._client = client
 
     def create(self, model, max_tokens=None, system=None, messages=None,
-               think=False, **kwargs):
+               think=False, temperature=None, **kwargs):
         """
         think: for reasoning-capable models (Qwen3, DeepSeek-R1, etc.),
         recent Ollama versions accept a native "think" toggle. Defaults to
@@ -98,8 +98,13 @@ class _Messages:
             "stream": False,
             "think": think,
         }
+        options = {}
         if max_tokens is not None:
-            payload["options"] = {"num_predict": max_tokens}
+            options["num_predict"] = max_tokens
+        if temperature is not None:
+            options["temperature"] = temperature
+        if options:
+            payload["options"] = options
 
         resp = requests.post(
             f"{self._client.base_url}/api/chat",

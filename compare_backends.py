@@ -88,15 +88,18 @@ def build_ollama_client(base_url, timeout=300):
         return None, f"could not create client: {e}"
 
 
-def run_backend(name, client, model, all_facts, max_tokens=300):
+def run_backend(name, client, model, all_facts, max_tokens=300, **extra):
     """Returns {label: {"narration": str, "coverage": float|None, "missing": [...]}}
-    or None if the client itself failed to build."""
+    or None if the client itself failed to build. extra: backend-specific
+    kwargs forwarded to explain_slice/messages.create (e.g. temperature=,
+    think= for Ollama, thinking= for Anthropic) -- only pass what the
+    specific client actually accepts."""
     if client is None:
         return None
     rows = {}
     for label, facts in all_facts.items():
         try:
-            narration = explain_slice(client, facts, model=model, max_tokens=max_tokens)
+            narration = explain_slice(client, facts, model=model, max_tokens=max_tokens, **extra)
         except Exception as e:
             narration = f"[ERROR calling {name}: {e}]"
         scored = score_coverage(label, narration)
@@ -153,7 +156,43 @@ def main():
                               "A larger --max-tokens means more generation time "
                               "needed per slice -- raise this alongside it for "
                               "slow reasoning models.")
+    parser.add_argument("--temperature", type=float, default=None,
+                         help="Applied to both legs if set. Omit to use each "
+                              "backend's own default.")
+    parser.add_argument("--think", action="store_true",
+                         help="Ollama leg only: enable native 'thinking' mode "
+                              "(off by default -- see ollama_client.py).")
+    parser.add_argument("--anthropic-thinking-budget", type=int, default=None,
+                         help="Anthropic leg only: enables extended thinking "
+                              "with this token budget. Must be less than "
+                              "--max-tokens or the API rejects the request.")
     args = parser.parse_args()
+
+    anthropic_extra = {}
+    ollama_extra = {}
+    anthropic_max_tokens = args.max_tokens
+    if args.temperature is not None:
+        ollama_extra["temperature"] = args.temperature
+        # Not added to anthropic_extra here when thinking is enabled (see
+        # below): per Anthropic's documented constraint, thinking requires
+        # temperature to stay at its default. NOT independently verified
+        # against the real API in this session -- only checked via
+        # OpenRouter, which accepted the combination anyway and so isn't
+        # proof either way, since it doesn't enforce this constraint
+        # server-side. If thinking isn't enabled, temperature is added in
+        # the branch below instead.
+    if args.think:
+        ollama_extra["think"] = True
+    if args.anthropic_thinking_budget is not None:
+        anthropic_extra["thinking"] = {
+            "type": "enabled", "budget_tokens": args.anthropic_thinking_budget,
+        }
+        # Anthropic requires max_tokens > budget_tokens -- bump automatically
+        # so --anthropic-thinking-budget without also raising --max-tokens
+        # doesn't silently fail against the default of 300.
+        anthropic_max_tokens = max(anthropic_max_tokens, args.anthropic_thinking_budget + 200)
+    elif args.temperature is not None:
+        anthropic_extra["temperature"] = args.temperature
 
     dj = DeutschJozsa(3)
     qc = dj.get_circuit(dj.f_xor, "xor")
@@ -167,7 +206,7 @@ def main():
             print(f"[Anthropic skipped: {err}]", file=sys.stderr)
         else:
             anthropic_rows = run_backend("Anthropic", client, args.anthropic_model, all_facts,
-                                          max_tokens=args.max_tokens)
+                                          max_tokens=anthropic_max_tokens, **anthropic_extra)
 
     ollama_rows = None
     if not args.skip_ollama:
@@ -176,7 +215,7 @@ def main():
             print(f"[Ollama skipped: {err}]", file=sys.stderr)
         else:
             ollama_rows = run_backend("Ollama", client, args.ollama_model, all_facts,
-                                       max_tokens=args.max_tokens)
+                                       max_tokens=args.max_tokens, **ollama_extra)
 
     if anthropic_rows is None and ollama_rows is None:
         print("Neither backend was available -- nothing to compare.", file=sys.stderr)

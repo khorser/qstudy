@@ -67,15 +67,21 @@ def build_slice_prompt(facts: SliceFacts) -> str:
     )
 
 
-def explain_slice(client, facts: SliceFacts, model="claude-sonnet-5", max_tokens=300) -> str:
+def explain_slice(client, facts: SliceFacts, model="claude-sonnet-5", max_tokens=300, **extra) -> str:
     """client: an anthropic.Anthropic() instance, passed in by the caller so
-    this module never touches API keys directly."""
+    this module never touches API keys directly.
+
+    extra: backend-specific kwargs forwarded as-is to client.messages.create
+    (e.g. think= for OllamaClient). Only pass what the specific client
+    actually accepts -- the real anthropic.Anthropic().messages.create()
+    has a strict signature and will reject unrecognized kwargs."""
     prompt = build_slice_prompt(facts)
     response = client.messages.create(
         model=model,
         max_tokens=max_tokens,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
+        **extra,
     )
     return "".join(block.text for block in response.content if block.type == "text")
 

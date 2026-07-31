@@ -4,3 +4,4 @@ __pycache__
 .aggregator_credentials.json
 aggregator_transcripts/
 .openrouter_credentials.json
+.anthropic_credentials.json

@@ -111,6 +111,19 @@ provider that speaks Anthropic's native Messages API shape, not just an
 OpenAI-compatible one — confirmed working against OpenRouter
 (`https://openrouter.ai/api`), which genuinely proxies to real Claude
 models rather than relabeling something else the way ModelProxy did.
+Connection details and generation params live in separate rows so the
+widget doesn't overflow horizontally. Max tokens and Temperature are
+backend-agnostic and apply to all three (every client shim -- including
+`ollama_client.py`/`aggregator_client.py`, both updated to actually route
+`temperature` into their respective request shapes rather than silently
+dropping it). Think (Ollama-only) and Thinking + Budget (Anthropic-only,
+real extended-thinking control -- `budget_tokens` must stay below Max
+tokens or the API rejects the request) are shown only for their matching
+backend, since neither generalizes: Ollama's is a plain boolean the local
+model either honors or ignores, Anthropic's is a real API parameter with
+a token budget, and the OpenAI-compatible aggregator has no equivalent at
+all -- a universal control would silently do nothing for two of the three
+backends.
 
 **`aggregator_client.py`** — duck-types the same client interface as
 `ollama_client.py`, but speaks an OpenAI-compatible `/chat/completions` +

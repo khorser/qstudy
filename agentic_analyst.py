@@ -202,7 +202,8 @@ AGENT_SYSTEM_PROMPT = (
 )
 
 
-def run_agent(client, algo, question, model="claude-sonnet-5", max_steps=8, verbose=True):
+def run_agent(client, algo, question, model="claude-sonnet-5", max_steps=8, verbose=True,
+              max_tokens=1024, temperature=None):
     """Runs the tool-use loop until the model stops calling tools or
     max_steps is hit. Returns (final_text, trace), where trace is the
     ordered list of (tool_name, tool_input, tool_result) actually executed
@@ -215,6 +216,9 @@ def run_agent(client, algo, question, model="claude-sonnet-5", max_steps=8, verb
         "get_slice_facts": lambda **kw: tools.get_slice_facts(**kw),
         "compare_resource_cost": lambda **kw: tools.compare_resource_cost(**kw),
     }
+    extra = {}
+    if temperature is not None:
+        extra["temperature"] = temperature
 
     messages = [{"role": "user", "content": question}]
     trace = []
@@ -222,10 +226,11 @@ def run_agent(client, algo, question, model="claude-sonnet-5", max_steps=8, verb
     for _ in range(max_steps):
         response = client.messages.create(
             model=model,
-            max_tokens=1024,
+            max_tokens=max_tokens,
             system=AGENT_SYSTEM_PROMPT,
             tools=TOOL_SCHEMAS,
             messages=messages,
+            **extra,
         )
         messages.append({"role": "assistant", "content": response.content})
 
@@ -283,9 +288,10 @@ def _tool_schemas_to_ollama(schemas):
 
 
 def run_agent_ollama(base_url, algo, question, model, max_steps=8, verbose=True, timeout=120,
-                      strip_thinking=True, think=False):
-    """Ollama-native equivalent of run_agent(). NOT run against a live
-    server in this environment -- the request/response shape here follows
+                      strip_thinking=True, think=False, max_tokens=1024, temperature=None):
+    """Ollama-native equivalent of run_agent(). Run live against a real
+    Ollama server many times since this was first written (see
+    agentic_testing_notes.md) -- the request/response shape here follows
     Ollama's documented tool-calling format (tools passed OpenAI-style;
     responses carry message["tool_calls"] as a list of
     {"function": {"name", "arguments"}}, with no per-call id the way
@@ -317,6 +323,12 @@ def run_agent_ollama(base_url, algo, question, model, max_steps=8, verbose=True,
     dispatch = _make_dispatch(tools)
     ollama_tools = _tool_schemas_to_ollama(TOOL_SCHEMAS)
 
+    options = {}
+    if max_tokens is not None:
+        options["num_predict"] = max_tokens
+    if temperature is not None:
+        options["temperature"] = temperature
+
     messages = [
         {"role": "system", "content": AGENT_SYSTEM_PROMPT},
         {"role": "user", "content": question},
@@ -324,15 +336,18 @@ def run_agent_ollama(base_url, algo, question, model, max_steps=8, verbose=True,
     trace = []
 
     for _ in range(max_steps):
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": ollama_tools,
+            "stream": False,
+            "think": think,
+        }
+        if options:
+            payload["options"] = options
         resp = requests.post(
             f"{base_url.rstrip('/')}/api/chat",
-            json={
-                "model": model,
-                "messages": messages,
-                "tools": ollama_tools,
-                "stream": False,
-                "think": think,
-            },
+            json=payload,
             timeout=timeout,
         )
         resp.raise_for_status()
@@ -371,7 +386,7 @@ def run_agent_ollama(base_url, algo, question, model, max_steps=8, verbose=True,
 
 
 def run_agent_aggregator(base_url, api_key, algo, question, model, max_steps=8, verbose=True,
-                          timeout=180):
+                          timeout=180, max_tokens=1024, temperature=None):
     """OpenAI-compatible-API equivalent of run_agent()/run_agent_ollama(),
     for aggregators (e.g. "ModelProxy," a pseudonym -- see
     agentic_testing_notes.md) that speak real OpenAI tool-calling
@@ -396,13 +411,18 @@ def run_agent_aggregator(base_url, api_key, algo, question, model, max_steps=8, 
     trace = []
 
     for _ in range(max_steps):
+        payload = {
+            "model": model,
+            "messages": messages,
+            "tools": openai_tools,
+        }
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if temperature is not None:
+            payload["temperature"] = temperature
         resp = requests.post(
             f"{base_url.rstrip('/')}/chat/completions",
-            json={
-                "model": model,
-                "messages": messages,
-                "tools": openai_tools,
-            },
+            json=payload,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=timeout,
         )

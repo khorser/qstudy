@@ -104,11 +104,11 @@ def probe_identity(client, model):
     return entry
 
 
-def narrate(client, model, all_facts, max_tokens=300):
+def narrate(client, model, all_facts, max_tokens=300, **extra):
     rows = {}
     for label, facts in all_facts.items():
         try:
-            narration = explain_slice(client, facts, model=model, max_tokens=max_tokens)
+            narration = explain_slice(client, facts, model=model, max_tokens=max_tokens, **extra)
             scored = score_coverage(label, narration)
             rows[label] = {
                 "narration": narration,
@@ -128,11 +128,17 @@ def main():
     parser.add_argument("--narrate", action="store_true",
                          help="also run the DeutschJozsa narration comparison per model (more tokens/cost)")
     parser.add_argument("--max-tokens", type=int, default=300)
+    parser.add_argument("--temperature", type=float, default=None,
+                         help="Omit to use the aggregator's own default.")
     parser.add_argument("--out", default=None,
                          help="transcript JSON path (default: timestamped, under aggregator_transcripts/)")
     args = parser.parse_args()
 
     load_credentials()
+
+    narrate_extra = {}
+    if args.temperature is not None:
+        narrate_extra["temperature"] = args.temperature
 
     if args.models:
         models = [m.strip() for m in args.models.split(",") if m.strip()]
@@ -168,7 +174,7 @@ def main():
         entry = {"model": model, "identity_probe": identity}
 
         if args.narrate:
-            rows = narrate(client, model, all_facts, max_tokens=args.max_tokens)
+            rows = narrate(client, model, all_facts, max_tokens=args.max_tokens, **narrate_extra)
             entry["narration"] = rows
             covs = [r["coverage"] for r in rows.values() if r["coverage"] is not None]
             if covs:

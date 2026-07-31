@@ -58,6 +58,16 @@ class AICircuitSlicer(CircuitSlicer):
             options=["Anthropic", "Ollama", "OpenAI-compatible"],
             value="Anthropic", description="Backend:"
         )
+        self.max_tokens_text = widgets.IntText(value=300, description="Max tokens:")
+        self.temperature_text = widgets.FloatText(value=1.0, description="Temp:")
+        self.anthropic_thinking_checkbox = widgets.Checkbox(
+            value=False, description="Thinking",
+            layout=widgets.Layout(display="none"),
+        )
+        self.anthropic_thinking_budget_text = widgets.IntText(
+            value=1024, description="Budget:",
+            layout=widgets.Layout(display="none"),
+        )
         self.anthropic_model_combo = widgets.Combobox(
             options=self._ANTHROPIC_MODELS,
             value=model if model in self._ANTHROPIC_MODELS else self._ANTHROPIC_MODELS[0],
@@ -83,6 +93,10 @@ class AICircuitSlicer(CircuitSlicer):
         )
         self.ollama_refresh_button = widgets.Button(
             description="Refresh models", layout=widgets.Layout(display="none"),
+        )
+        self.ollama_think_checkbox = widgets.Checkbox(
+            value=False, description="Think",
+            layout=widgets.Layout(display="none"),
         )
         self.ollama_status = widgets.HTML(value="", layout=widgets.Layout(display="none"))
         self.aggregator_model_combo = widgets.Combobox(
@@ -119,6 +133,9 @@ class AICircuitSlicer(CircuitSlicer):
                           self.ollama_refresh_button,
                           self.aggregator_url_text, self.aggregator_key_text,
                           self.aggregator_model_combo, self.aggregator_refresh_button]),
+            widgets.HBox([self.max_tokens_text, self.temperature_text,
+                          self.anthropic_thinking_checkbox, self.anthropic_thinking_budget_text,
+                          self.ollama_think_checkbox]),
             self.anthropic_status,
             self.ollama_status,
             self.aggregator_status,
@@ -139,9 +156,11 @@ class AICircuitSlicer(CircuitSlicer):
             status.value = ""
             status.layout.display = "none"
         for w in (self.anthropic_url_text, self.anthropic_key_text,
-                  self.anthropic_model_combo, self.anthropic_refresh_button):
+                  self.anthropic_model_combo, self.anthropic_refresh_button,
+                  self.anthropic_thinking_checkbox, self.anthropic_thinking_budget_text):
             w.layout.display = "" if is_anthropic else "none"
-        for w in (self.ollama_model_dropdown, self.ollama_url_text, self.ollama_refresh_button):
+        for w in (self.ollama_model_dropdown, self.ollama_url_text,
+                  self.ollama_refresh_button, self.ollama_think_checkbox):
             w.layout.display = "" if is_ollama else "none"
         for w in (self.aggregator_model_combo, self.aggregator_url_text,
                   self.aggregator_key_text, self.aggregator_refresh_button):
@@ -335,8 +354,32 @@ class AICircuitSlicer(CircuitSlicer):
                 print(f"{err}\n\nShowing the prompt that would be sent instead:\n")
                 print(build_slice_prompt(facts))
                 return
+            extra = {}
+            effective_max_tokens = self.max_tokens_text.value
+            if self.backend_dropdown.value == "Ollama":
+                extra["think"] = self.ollama_think_checkbox.value
+                extra["temperature"] = self.temperature_text.value
+            elif self.backend_dropdown.value == "Anthropic" and self.anthropic_thinking_checkbox.value:
+                extra["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": self.anthropic_thinking_budget_text.value,
+                }
+                # Anthropic requires max_tokens > budget_tokens -- bump
+                # automatically so checking the box doesn't silently fail
+                # against the stock max_tokens=300 default. temperature is
+                # deliberately omitted here per Anthropic's documented
+                # constraint (thinking requires temperature to stay at its
+                # default) -- NOT independently verified against the real
+                # API in this session; OpenRouter's proxy accepted the
+                # combination anyway, which isn't proof either way since it
+                # doesn't enforce this constraint server-side.
+                effective_max_tokens = max(effective_max_tokens,
+                                            self.anthropic_thinking_budget_text.value + 200)
+            else:
+                extra["temperature"] = self.temperature_text.value
             try:
-                narration = explain_slice(client, facts, model=self._current_model)
+                narration = explain_slice(client, facts, model=self._current_model,
+                                           max_tokens=effective_max_tokens, **extra)
                 display(HTML(f"<b>Slice \"{facts.label}\" ({self.backend_dropdown.value}, "
                               f"{self._current_model}):</b><br>{narration}"))
             except Exception as e:

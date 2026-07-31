@@ -66,6 +66,13 @@ def main():
     parser.add_argument("--skip-anthropic", action="store_true")
     parser.add_argument("--skip-ollama", action="store_true")
     parser.add_argument("--max-steps", type=int, default=8)
+    parser.add_argument("--max-tokens", type=int, default=1024)
+    parser.add_argument("--temperature", type=float, default=None,
+                         help="Applied to both legs if set. Omit to use each "
+                              "backend's own default.")
+    parser.add_argument("--think", action="store_true",
+                         help="Ollama leg only: enable native 'thinking' mode "
+                              "(off by default -- see ollama_client.py).")
     args = parser.parse_args()
 
     print(f"Question: {args.question}\n")
@@ -80,6 +87,7 @@ def main():
             text, trace = run_agent(
                 client, DeutschJozsa(3), args.question,
                 model=args.anthropic_model, max_steps=args.max_steps,
+                max_tokens=args.max_tokens, temperature=args.temperature,
             )
             anthropic_result = (text, trace)
             print()
@@ -91,6 +99,8 @@ def main():
             text, trace = run_agent_ollama(
                 resolve_base_url(args.ollama_url), DeutschJozsa(3), args.question,
                 model=args.ollama_model, max_steps=args.max_steps,
+                max_tokens=args.max_tokens, temperature=args.temperature,
+                think=args.think,
             )
             ollama_result = (text, trace)
         except Exception as e:
