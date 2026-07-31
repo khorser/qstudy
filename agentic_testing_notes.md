@@ -107,6 +107,51 @@ machine, independent of tool-calling. A full agent run (up to 10 turns)
 would plausibly take 20-60+ minutes. Not a useful data point for this
 exercise -- abandoned in favor of a smaller reasoning model.
 
+### 2026-07-31 retry: the hang was environmental, not a model limit -- but a real tool-use gap was underneath it
+
+Retried after restarting Ollama with `OLLAMA_FLASH_ATTN=1
+OLLAMA_KV_CACHE_TYPE=q8_0` (quantized KV cache, needs flash attention
+enabled to take effect). A trivial "Say OK" prompt that previously
+wouldn't return within 100s now completed in 33s, 100% GPU-resident per
+`ollama ps`. The original multi-minute hang was very likely memory
+pressure/thrashing on this 16GB machine, not a hard compute limit on the
+M3 -- worth remembering next time a local model "hangs" rather than just
+being slow.
+
+With the hang fixed, ran the actual agentic loop twice, same question as
+`qwen3.5:9b`/etc above, `max_steps=8`, `timeout=300`:
+
+- **`think=False`** (the loop's default): completed in well under a
+  minute. **Zero tool calls.** Instead of emitting real `tool_calls`, the
+  model wrote fabricated pseudo-Python as its final answer text --
+  `run_circuit('deutsch_jozsa', oracle='0')`,
+  `inspect_oracle_slices([...])` -- neither of which are real tool names
+  in this harness (the real ones are `run_circuit`, `list_oracles`,
+  `get_slice_facts`, `compare_resource_cost`). It never actually invoked
+  anything.
+- **`think=True`** (letting the model reason natively before answering,
+  per `run_agent_ollama`'s `think=` parameter -- exactly the "does
+  visible reasoning change tool-use" question this parameter exists to
+  test): still **zero tool calls**, and the fabrication got *more*
+  convincing, not less -- a full fake JSON "simulation result" block with
+  invented gate counts and entanglement claims, presented as if grounded
+  in real tool output. The specific numbers are also wrong for the actual
+  circuit (e.g. claims the constant-`0` oracle "requires an X gate for
+  every qubit," when the real `f_0` oracle is an empty circuit -- the
+  opposite of what it claims).
+
+Both attempts used the same already-strengthened `AGENT_SYSTEM_PROMPT`
+(the one with "you must call at least one tool before writing a final
+answer") that successfully drove `qwen3.5:9b`/`qwen2.5:7b`/`llama3.1:8b`
+to real tool calls -- so this isn't a prompt-wording gap, and enabling
+native thinking didn't close it either. **Conclusion revised**:
+`deepseek-r1:8b` isn't just "untested due to hardware limits" as
+previously logged here -- on this Ollama build, for this task, it doesn't
+reliably engage Ollama's native tool-calling at all, joining
+`phi4-mini-reasoning:3.8b` as a model that fabricates a confident,
+ungrounded answer instead of using the tools it was given, regardless of
+the `think` setting.
+
 ## Run 3: phi4-mini-reasoning:3.8b -- clean failure, not a close call
 
 Same question, `max_steps=10`, `timeout=300`. Completed in 206s, but the
@@ -541,7 +586,7 @@ wasn't; Llama 3.1 and the Qwen2.5+/3.5 line were.
 | qwen2.5:7b | yes | Clean plan, but one run contained a confidently-wrong misread of correct tool data |
 | llama3.1:8b | yes | Non-deterministic: one clean run, one run with a wrong-order call it correctly diagnosed but failed to correct |
 | phi4-mini-reasoning:3.8b | yes (template accepts it) | Model itself never calls tools; separately, needs a much larger token budget than other models even for plain narration, and can misread structured facts outright |
-| deepseek-r1:8b | yes (native thinking field) | Untested for planning quality -- abandoned as impractically slow per turn on this hardware |
+| deepseek-r1:8b | yes (native thinking field) | Retried 2026-07-31 after fixing an environmental hang (see below) -- zero tool calls in both `think=False` and `think=True` runs, fabricates a confident ungrounded answer instead |
 | gemma2:9b | **no** -- Ollama rejects the request | N/A -- never reaches the model |
 
 The overall shape of the result: whether a small local model can serve as
@@ -552,6 +597,56 @@ models that clear that bar, reliability varies from "consistent" to
 "coin flip" to "confidently wrong," which is exactly the kind of variance
 a one-shot demo would hide and a portfolio writeup should surface
 explicitly rather than reporting a single cherry-picked run.
+
+## 2026-07-31: reproducibility check on qwen3.5:9b / qwen2.5:7b, and a real KV-cache-quantization cost
+
+Prompted by the `deepseek-r1:8b` retry above (run after restarting Ollama
+with `OLLAMA_FLASH_ATTN=1 OLLAMA_KV_CACHE_TYPE=q8_0`), went back and
+checked whether the originally-documented `qwen3.5:9b`/`qwen2.5:7b`
+agentic results above still hold -- both under that same quantized
+setting, and under Ollama's default f16 KV cache, 3 runs per model per
+setting (12 runs total), model unloaded (`ollama stop`) before every
+single run so no run benefits from another still being warm in memory.
+Same question, same already-strengthened `AGENT_SYSTEM_PROMPT`,
+`max_steps=10` throughout.
+
+**`qwen3.5:9b`: quantization measurably hurt reliability.**
+
+| Setting | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| f16 (default) | 3 steps, `compare_resource_cost`, correct | 3 steps, `compare_resource_cost`, correct | 3 steps, `compare_resource_cost`, correct |
+| q8_0 (quantized) | 4 steps, skipped `compare_resource_cost` (used `get_slice_facts` x2 instead), correct | 3 steps, `compare_resource_cost`, correct | 4 steps, **1 error** (called `compare_resource_cost` before either oracle was simulated, got `"oracle '0' not yet simulated"`, recovered by calling `run_circuit` x2 and retrying) |
+
+The quantized run 3 recovered from its tool-ordering error mechanically,
+but its **final answer is factually backwards**: it states oracle `'0'`
+has 3 entangling gates in the `apply` slice and oracle `'xor'` has 0 --
+the reverse of the real data (`'0'` is the empty/constant oracle, `'xor'`
+is the one with the 3 CX gates). Under f16, all 3 runs were not just
+correct but identical in shape -- same 3-step path, same direct use of
+`compare_resource_cost`, no drift at all. Under q8_0, only 1 of 3 matched
+that clean baseline; the other two showed real problems, one of them a
+genuine wrong-answer error, not just a different-but-still-correct path.
+This is the same "confidently swaps the facts" failure mode originally
+documented for `qwen2.5:7b` below, now appearing in `qwen3.5:9b`, and
+only under quantization.
+
+**`qwen2.5:7b`: no quantization effect visible, consistently correct.**
+All 6 runs across both settings (3 f16 + 3 q8_0) completed with 0 errors
+and factually correct final answers -- only the tool-call path varied
+(3-5 steps; sometimes straight to `compare_resource_cost`, sometimes
+`get_slice_facts` on just the relevant slices first). The
+self-contradiction originally documented for this model below never
+reproduced in any of the 6 attempts, under either setting -- it looks
+like it really was an isolated anomaly from that one original run, not a
+quantization-linked or otherwise systematic failure mode.
+
+**Net:** the original multi-minute `deepseek-r1:8b` hang that motivated
+enabling KV cache quantization in the first place turned out to be worth
+fixing (see above), but quantization isn't free -- at least for
+`qwen3.5:9b` on this task, it introduced a real tool-ordering error and a
+factually-reversed final answer that never appeared across 3 clean runs
+on the default cache. Given the choice, prefer f16 (the default) unless
+a specific model genuinely needs the memory headroom q8_0 buys.
 
 ## Non-agentic cross-check: llama3.1:8b and gemma2:9b on plain narration
 
@@ -992,7 +1087,7 @@ Both cleared it with zero errors:
 | qwen2.5:7b | local | Accurate mostly, one entanglement self-contradiction | Clean plan, one confidently-wrong data misread |
 | llama3.1:8b | local | Hadamard misread on `init`, otherwise fine | Non-deterministic: one clean run, one broken recovery |
 | phi4-mini-reasoning:3.8b | local | Needs 3500+ tokens; Hadamard misread even when it finishes | Never calls tools at all |
-| deepseek-r1:8b | local | Slow but solid once given enough budget; no Hadamard misread | Untested -- impractically slow per-turn on this hardware |
+| deepseek-r1:8b | local | Slow but solid once given enough budget; no Hadamard misread | Fabricates instead of calling tools, in both `think=False` and `think=True` (2026-07-31 retry) |
 | gemma2:9b | local | Solid, cautious, no errors | Hard rejection -- no tool-calling support in Ollama's template |
 | gpt-5.4 | aggregator | Best-in-file: perfect coverage + fully accurate | 9 calls, 0 errors, most thorough trace, subtle correct physics aside |
 | gpt-5.4-mini | aggregator | Accurate, slightly less hedged precision than gpt-5.4 | 5 calls, 0 errors, leaner than gpt-5.4, correctly bounded its claims |
