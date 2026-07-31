@@ -104,7 +104,13 @@ server, or an OpenAI-compatible aggregator — each with its own "Refresh
 models" button that queries the real, current model list live (Anthropic's
 `models.list()`, Ollama's installed tags, or the aggregator's `/models`)
 instead of guessing model names. Degrades gracefully with no API
-key/server configured.
+key/server configured. The Anthropic backend also has optional URL/Key
+fields (blank = the real Anthropic API): the `anthropic` SDK's own
+`base_url`/`api_key` handling means these work unmodified against any
+provider that speaks Anthropic's native Messages API shape, not just an
+OpenAI-compatible one — confirmed working against OpenRouter
+(`https://openrouter.ai/api`), which genuinely proxies to real Claude
+models rather than relabeling something else the way ModelProxy did.
 
 **`aggregator_client.py`** — duck-types the same client interface as
 `ollama_client.py`, but speaks an OpenAI-compatible `/chat/completions` +

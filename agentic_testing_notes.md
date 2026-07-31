@@ -1220,3 +1220,142 @@ shows that was a flake, not a capability gap on that specific slice.
 `claude-opus-5`'s identity probe likewise timed out on the first attempt
 and was confirmed as Kiro on retry, consistent with the earlier
 catalog-wide probe.
+
+## 2026-07-31: OpenRouter as a second third-party provider, via Anthropic's native API shape (not ModelProxy's OpenAI shape)
+
+Separately from ModelProxy, tested OpenRouter directly against the real
+`anthropic` SDK -- `anthropic.Anthropic(base_url="https://openrouter.ai/api", api_key=...)`,
+no `aggregator_client.py`-style shim needed, since OpenRouter genuinely
+implements Anthropic's native `/v1/messages` shape for its Claude models,
+not just an OpenAI-compatible one.
+
+**A real caveat surfaced first**: the `anthropic` SDK always posts to a
+fixed `/v1/messages` path relative to `base_url`. Passing
+`base_url="https://openrouter.ai/api/v1"` (trailing `/v1`, the natural
+guess) doubles to `.../api/v1/v1/messages`, which doesn't exist and
+silently falls through to OpenRouter's marketing site, returning a full
+HTML page wrapped in a `NotFoundError` -- not an obviously-that's-the-cause
+error message. Confirmed via `GET https://openrouter.ai/api/v1/models` (works,
+no `/v1` doubling issue since that's a literal path, not SDK-appended)
+that OpenRouter's catalog lists `claude-fable-5`, `claude-sonnet-5`, and
+`claude-opus-5` (current flagships) plus older `claude-opus-4.x`. Correct
+`base_url` is `https://openrouter.ai/api`, no trailing `/v1`.
+
+**Identity probe** (same question as the ModelProxy section): all three
+responded as genuine Claude ("I'm Claude, made by Anthropic" /
+equivalent), no Kiro-style mislabeling. `claude-opus-5`'s own *guess* at
+its exact version was wrong ("my best understanding is that I'm Claude
+Sonnet 4.5") -- but that's the same honest, hedged uncertainty real
+Claude gives when asked to introspect on its own version string (models
+don't have reliable access to this), categorically different from
+Kiro's confident, specific false claim ("I'm Kiro, an agentic
+development environment built by AWS"). `claude-opus-5` and
+`claude-fable-5` both invoked extended thinking for this question
+(visible `thinking` + `text` blocks); `claude-sonnet-5` didn't.
+`claude-opus-5` first ran at the default `max_tokens=300` and burned the
+entire budget on the `thinking` block (`stop_reason: max_tokens`,
+zero text) -- needed `max_tokens=2000` to actually see an answer, the
+same "reasoning eats the budget" lesson `ollama_client.py`'s docstring
+already documents for local reasoning models.
+
+**Narration comparison** (`compare_backends.py`, `max_tokens=2000`, full
+transcript in `aggregator_transcripts/openrouter_native_narrate_2026-07-31.txt`,
+not committed):
+
+| Model | init | prep | apply | done | final | avg |
+|---|---|---|---|---|---|---|
+| `claude-fable-5` | 0.25 | 0.67 | 1.00 | 1.00 | 0.75 | 0.73 |
+| `claude-sonnet-5` | 0.25 | 1.00 | 0.33 | 1.00 | 0.75 | 0.67 |
+| `claude-opus-5` | 0.25 | 0.67 | 1.00 | 0.75 | 1.00 | 0.73 |
+
+No errors, no fabrication, no wrong physics anywhere across all 15
+slice-narrations -- every model correctly explained the phase-kickback
+mechanism in its own words even on slices where it missed the
+reference's exact vocabulary (e.g. every model lost points on `init` for
+not saying "eigenstate"/"-1", despite correctly describing what the X
+gate does).
+
+**Comparison against ModelProxy's results above -- with a real caveat.**
+Side by side with the ModelProxy narration table:
+
+| Model | Provider | Avg. coverage |
+|---|---|---|
+| `claude-fable-5` | ModelProxy (genuine) | 0.85 |
+| `claude-opus-4-6` | ModelProxy ("Kiro") | 0.80 |
+| `claude-opus-4-7` | ModelProxy ("Kiro") | 0.73 |
+| `claude-fable-5` | **OpenRouter (genuine)** | **0.73** |
+| `claude-opus-5` | **OpenRouter (genuine)** | **0.73** |
+| `claude-opus-5` | ModelProxy ("Kiro") | 0.63 |
+| `claude-sonnet-4-6` | ModelProxy ("Kiro") | 0.63 |
+| `claude-sonnet-5` | **OpenRouter (genuine)** | **0.67** |
+
+The same model name (`claude-fable-5`) scored 0.85 on ModelProxy but
+0.73 on OpenRouter -- **not a clean apples-to-apples comparison**: the
+ModelProxy run used the default `max_tokens=300` (no visible thinking,
+all budget goes to the answer), while the OpenRouter run needed
+`max_tokens=2000` specifically because these models invoke real extended
+thinking that eats part of the budget before any answer text appears.
+Different budgets, and possibly different effective reasoning-vs-answer
+splits, confound the comparison -- this isn't evidence OpenRouter's
+`claude-fable-5` is a weaker model than ModelProxy's, just that the two
+runs weren't controlled for token budget. A fair rerun would need the
+same `max_tokens` on both, and ideally checking whether ModelProxy's
+Claude-shaped `/chat/completions` endpoint exposes any thinking-budget
+equivalent at all. What *is* a clean, uncounfounded finding: identity.
+ModelProxy's Claude namespace is mostly fake (4 of 5 non-`fable-5`
+entries confirmed Kiro); OpenRouter's Claude namespace, at least for the
+three models tested here, is not -- every one of them genuinely
+self-identifies as Claude.
+
+**Follow-up: does more budget change anything past 2000?** Reran
+`claude-fable-5` and `claude-opus-5` at `max_tokens=4000` (transcript:
+`aggregator_transcripts/openrouter_native_narrate_maxtok4000_2026-07-31.txt`).
+`claude-fable-5` reproduced its exact 2000-token scores slice-for-slice
+(0.73 avg, identical per slice). `claude-opus-5` landed at essentially
+the same average (0.72 vs. 0.73) but with the per-slice distribution
+reshuffled (`init` up 0.25->0.50, `apply` down 1.00->0.67, `final` down
+1.00->0.75) -- ordinary run-to-run phrasing variance, not a budget
+effect, since neither the 2000- nor 4000-token run showed truncation.
+Conclusion: 2000 tokens was already sufficient headroom for both models
+on this task; the real threshold to watch for is the original all-budget
+consumed by thinking failure mode seen at `max_tokens=300`, not anything
+beyond roughly 2000.
+
+## 2026-07-31: OpenRouter's deepseek-r1 (full model) via the OpenAI-compatible shape -- resolves whether the local 8b distillation's tool-use failure was model or distillation
+
+The local `deepseek-r1:8b` retry earlier in this file found the model
+never engages Ollama's tool-calling at all for the agentic task,
+fabricating a confident, ungrounded answer instead (in both `think=False`
+and `think=True`). Open question: is that a DeepSeek-R1 architecture
+limitation, or specific to the 8b distillation / Ollama's chat-template
+handling of it? OpenRouter's catalog lists the full model as
+`deepseek/deepseek-r1` (distinct from `deepseek/deepseek-r1-distill-llama-70b`,
+a different distillation, and `deepseek/deepseek-r1-0528`, a later
+checkpoint). Unlike the Claude-family test above, this needed the
+OpenAI-compatible shape (`aggregator_client.py`'s `AggregatorClient`,
+`base_url="https://openrouter.ai/api/v1"`) rather than Anthropic's native
+one, since it's not an Anthropic-branded model. Transcript:
+`aggregator_transcripts/openrouter_deepseek_r1_agentic_2026-07-31.txt`.
+
+**Identity probe**: correctly self-identifies as *"DeepSeek-R1, developed
+by DeepSeek（深度求索）, a Beijing-based AI company"* -- genuine, no
+mislabeling.
+
+**Agentic loop** (same question, tools, and `AGENT_SYSTEM_PROMPT` as
+every other model tested in this file): unlike the local 8b distillation,
+**this one actually calls tools** -- `list_oracles`, `run_circuit('0')`,
+`run_circuit('xor')`, then (redundantly) both `run_circuit` calls again,
+then `list_oracles` **five more times** with no new information each
+time, then finally `compare_resource_cost`, landing on a fully correct,
+properly grounded final answer citing the real returned data (right
+oracle, right slice, right gate counts). 11 tool calls total, 0 errors --
+correct, but strikingly wasteful compared to `qwen3.5:9b`'s consistent
+3-step solves of the identical task.
+
+**Conclusion**: the local `deepseek-r1:8b` distillation's total
+non-engagement with tool-calling looks like it really was specific to
+that distillation (or how Ollama's chat template handles it) -- the full,
+genuine DeepSeek-R1 model *can* plan and execute a correct tool-calling
+solution to this exact task. It's just a much less efficient planner than
+the smaller qwen models when it does, burning almost 4x the tool calls on
+redundant re-checks that added no new information.

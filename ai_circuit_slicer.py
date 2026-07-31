@@ -41,6 +41,10 @@ class AICircuitSlicer(CircuitSlicer):
         useful for scripts/tests). Leave None to get a live "Backend" /
         "Model" / per-backend connection-field selector in the widget
         instead (Anthropic, Ollama, or an OpenAI-compatible aggregator).
+        The Anthropic backend's URL/Key fields are optional -- leave blank
+        for the real Anthropic API, or point them at any provider that
+        speaks Anthropic's native Messages API shape (e.g. OpenRouter,
+        confirmed working against https://openrouter.ai/api).
         """
         self._explicit_client = anthropic_client
         self.algo_description = algo_description or getattr(algo, "__doc__", "") or ""
@@ -61,6 +65,14 @@ class AICircuitSlicer(CircuitSlicer):
         )
         self.anthropic_refresh_button = widgets.Button(description="Refresh models")
         self.anthropic_status = widgets.HTML(value="")
+        self.anthropic_url_text = widgets.Text(
+            value="", placeholder="(uses ANTHROPIC_BASE_URL if blank)",
+            description="URL:",
+        )
+        self.anthropic_key_text = widgets.Password(
+            value="", placeholder="(uses ANTHROPIC_API_KEY if blank)",
+            description="Key:",
+        )
         self.ollama_model_dropdown = widgets.Dropdown(
             options=["(click Refresh)"], value="(click Refresh)", description="Model:",
             layout=widgets.Layout(display="none"),
@@ -101,6 +113,7 @@ class AICircuitSlicer(CircuitSlicer):
         self.tab.set_title(len(self.tab.children) - 1, "Resources")
         ai_controls = widgets.VBox([
             widgets.HBox([self.backend_dropdown,
+                          self.anthropic_url_text, self.anthropic_key_text,
                           self.anthropic_model_combo, self.anthropic_refresh_button,
                           self.ollama_url_text, self.ollama_model_dropdown,
                           self.ollama_refresh_button,
@@ -125,7 +138,8 @@ class AICircuitSlicer(CircuitSlicer):
         for status in (self.anthropic_status, self.ollama_status, self.aggregator_status):
             status.value = ""
             status.layout.display = "none"
-        for w in (self.anthropic_model_combo, self.anthropic_refresh_button):
+        for w in (self.anthropic_url_text, self.anthropic_key_text,
+                  self.anthropic_model_combo, self.anthropic_refresh_button):
             w.layout.display = "" if is_anthropic else "none"
         for w in (self.ollama_model_dropdown, self.ollama_url_text, self.ollama_refresh_button):
             w.layout.display = "" if is_ollama else "none"
@@ -217,7 +231,10 @@ class AICircuitSlicer(CircuitSlicer):
             except ImportError:
                 return None, "anthropic package not installed (pip install anthropic)"
             try:
-                return anthropic.Anthropic(), None
+                return anthropic.Anthropic(
+                    base_url=self.anthropic_url_text.value or None,
+                    api_key=self.anthropic_key_text.value or None,
+                ), None
             except Exception as e:
                 return None, f"Could not create Anthropic client (check ANTHROPIC_API_KEY): {e}"
         elif backend == "OpenAI-compatible":
