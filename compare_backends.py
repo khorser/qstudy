@@ -139,7 +139,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--anthropic-model", default="claude-sonnet-5")
     parser.add_argument("--ollama-model", default="qwen2.5:7b")
-    parser.add_argument("--ollama-url", default="http://localhost:11434")
+    parser.add_argument("--ollama-url", default=None,
+                         help="defaults to OLLAMA_API_BASE env var, else http://localhost:11434")
     parser.add_argument("--skip-anthropic", action="store_true")
     parser.add_argument("--skip-ollama", action="store_true")
     parser.add_argument("--max-tokens", type=int, default=300,

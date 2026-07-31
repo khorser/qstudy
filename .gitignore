@@ -1,3 +1,5 @@
 .ipynb_checkpoints
 __pycache__
 *.ipynb
+.aggregator_credentials.json
+aggregator_transcripts/

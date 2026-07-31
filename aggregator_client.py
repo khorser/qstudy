@@ -12,9 +12,10 @@ shape (messages with "system"/"user"/"assistant" roles in one list, choices
 format.
 
 Deliberately does not hardcode a base URL -- pass one explicitly or set
-AGGREGATOR_BASE_URL, so no third-party service name lives in this file.
-Referred to elsewhere in this repo (agentic_testing_notes.md) by the
-pseudonym "ModelProxy," not by its real name.
+OPENAI_BASE_URL/OPENAI_API_KEY (the standard env vars the official openai
+SDK reads), so no third-party service name lives in this file. Referred to
+elsewhere in this repo (agentic_testing_notes.md) by the pseudonym
+"ModelProxy," not by its real name.
 
 The model catalog behind a given aggregator/model name isn't independently
 verified here -- see agentic_testing_notes.md for the trust caveats
@@ -62,17 +63,16 @@ class _Messages:
 
 class AggregatorClient:
     def __init__(self, base_url=None, api_key=None, timeout=180):
-        base_url = base_url or os.environ.get("AGGREGATOR_BASE_URL")
+        base_url = base_url or os.environ.get("OPENAI_BASE_URL")
         if not base_url:
             raise ValueError(
-                "No base URL -- pass base_url= or set AGGREGATOR_BASE_URL."
+                "No base URL -- pass base_url= or set OPENAI_BASE_URL."
             )
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError(
-                "No API key -- pass api_key= or set ANTHROPIC_API_KEY "
-                "(the env var name this aggregator key was exported under)."
+                "No API key -- pass api_key= or set OPENAI_API_KEY."
             )
         self.timeout = timeout
         self.messages = _Messages(self)
@@ -84,12 +84,12 @@ def list_aggregator_models(base_url=None, api_key=None, timeout=10):
     aggregator isn't reachable or misconfigured -- callers should catch
     and show a friendly message rather than let this propagate into a
     dead dropdown."""
-    base_url = base_url or os.environ.get("AGGREGATOR_BASE_URL")
+    base_url = base_url or os.environ.get("OPENAI_BASE_URL")
     if not base_url:
-        raise ValueError("No base URL -- pass base_url= or set AGGREGATOR_BASE_URL.")
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        raise ValueError("No base URL -- pass base_url= or set OPENAI_BASE_URL.")
+    api_key = api_key or os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("No API key -- pass api_key= or set ANTHROPIC_API_KEY.")
+        raise ValueError("No API key -- pass api_key= or set OPENAI_API_KEY.")
     resp = requests.get(
         f"{base_url.rstrip('/')}/models",
         headers={"Authorization": f"Bearer {api_key}"},

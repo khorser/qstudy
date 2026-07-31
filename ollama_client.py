@@ -8,11 +8,22 @@ a local Ollama server instead of the Anthropic API.
 Nothing in resource_stats.py, ai_narrator.py, or ai_circuit_slicer.py
 changes -- this is purely an alternative "client" object, matching the
 existing seam (`anthropic_client=` in AICircuitSlicer.__init__).
+
+Base URL resolution (see resolve_base_url()): explicit base_url= argument,
+else the OLLAMA_API_BASE env var, else the hardcoded
+http://localhost:11434 default.
 """
+import os
 import re
 from types import SimpleNamespace
 
 import requests
+
+
+def resolve_base_url(base_url=None):
+    """Resolves an Ollama server base URL: explicit argument > OLLAMA_API_BASE
+    env var > hardcoded http://localhost:11434 default."""
+    return base_url or os.environ.get("OLLAMA_API_BASE") or "http://localhost:11434"
 
 # Reasoning-style local models (DeepSeek-R1, Qwen3-thinking, etc.) often
 # embed their chain-of-thought directly in message.content wrapped in
@@ -133,21 +144,22 @@ class _Messages:
 
 
 class OllamaClient:
-    def __init__(self, base_url="http://localhost:11434", timeout=300):
+    def __init__(self, base_url=None, timeout=300):
         # 120s was too short for reasoning-heavy local models at a
         # max_tokens budget large enough to actually finish (observed:
         # phi4-mini-reasoning:3.8b routinely takes 100-200+s per slice at
         # max_tokens=3500). 300s gives headroom without being unbounded.
-        self.base_url = base_url.rstrip("/")
+        self.base_url = resolve_base_url(base_url).rstrip("/")
         self.timeout = timeout
         self.messages = _Messages(self)
 
 
-def list_ollama_models(base_url="http://localhost:11434", timeout=10):
+def list_ollama_models(base_url=None, timeout=10):
     """Returns a list of model tags installed on the given Ollama server
     (e.g. ["qwen2.5:7b", "deepseek-r1:8b"]). Raises if the server isn't
     reachable -- callers should catch and show a friendly message rather
     than let this propagate into a dead dropdown."""
+    base_url = resolve_base_url(base_url)
     resp = requests.get(f"{base_url.rstrip('/')}/api/tags", timeout=timeout)
     resp.raise_for_status()
     data = resp.json()

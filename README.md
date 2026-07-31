@@ -110,8 +110,8 @@ key/server configured.
 `ollama_client.py`, but speaks an OpenAI-compatible `/chat/completions` +
 `/models` API instead, for testing narration against a third-party model
 aggregator. Deliberately takes `base_url`/`api_key` as parameters (or
-`AGGREGATOR_BASE_URL`/`ANTHROPIC_API_KEY` env vars) rather than hardcoding
-a hostname.
+`OPENAI_BASE_URL`/`OPENAI_API_KEY` env vars, the standard names the
+official `openai` SDK reads) rather than hardcoding a hostname.
 
 **`ollama_client.py`** — duck-types just enough of the Anthropic client
 interface to run `ai_narrator` against a local Ollama model instead.

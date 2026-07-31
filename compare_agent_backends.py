@@ -22,6 +22,7 @@ import argparse
 import sys
 
 from agentic_analyst import DeutschJozsa, run_agent, run_agent_ollama
+from ollama_client import resolve_base_url
 
 DEFAULT_QUESTION = (
     "Compare the resource cost of the '0' and 'xor' oracles for this "
@@ -60,7 +61,8 @@ def main():
     parser.add_argument("--question", default=DEFAULT_QUESTION)
     parser.add_argument("--anthropic-model", default="claude-sonnet-5")
     parser.add_argument("--ollama-model", default="qwen2.5:7b")
-    parser.add_argument("--ollama-url", default="http://localhost:11434")
+    parser.add_argument("--ollama-url", default=None,
+                         help="defaults to OLLAMA_API_BASE env var, else http://localhost:11434")
     parser.add_argument("--skip-anthropic", action="store_true")
     parser.add_argument("--skip-ollama", action="store_true")
     parser.add_argument("--max-steps", type=int, default=8)
@@ -87,7 +89,7 @@ def main():
         print("=" * 40, "OLLAMA", "=" * 40)
         try:
             text, trace = run_agent_ollama(
-                args.ollama_url, DeutschJozsa(3), args.question,
+                resolve_base_url(args.ollama_url), DeutschJozsa(3), args.question,
                 model=args.ollama_model, max_steps=args.max_steps,
             )
             ollama_result = (text, trace)

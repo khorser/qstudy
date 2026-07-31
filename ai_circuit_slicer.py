@@ -66,8 +66,8 @@ class AICircuitSlicer(CircuitSlicer):
             layout=widgets.Layout(display="none"),
         )
         self.ollama_url_text = widgets.Text(
-            value="http://localhost:11434", description="Ollama URL:",
-            layout=widgets.Layout(display="none"),
+            value="", placeholder="(uses OLLAMA_API_BASE, else localhost:11434)",
+            description="URL:", layout=widgets.Layout(display="none"),
         )
         self.ollama_refresh_button = widgets.Button(
             description="Refresh models", layout=widgets.Layout(display="none"),
@@ -78,12 +78,12 @@ class AICircuitSlicer(CircuitSlicer):
             layout=widgets.Layout(display="none"),
         )
         self.aggregator_url_text = widgets.Text(
-            value="", placeholder="(uses AGGREGATOR_BASE_URL if blank)",
-            description="Aggregator URL:", layout=widgets.Layout(display="none"),
+            value="", placeholder="(uses OPENAI_BASE_URL if blank)",
+            description="URL:", layout=widgets.Layout(display="none"),
         )
         self.aggregator_key_text = widgets.Password(
-            value="", placeholder="(uses ANTHROPIC_API_KEY if blank)",
-            description="Aggregator Key:", layout=widgets.Layout(display="none"),
+            value="", placeholder="(uses OPENAI_API_KEY if blank)",
+            description="Key:", layout=widgets.Layout(display="none"),
         )
         self.aggregator_refresh_button = widgets.Button(
             description="Refresh models", layout=widgets.Layout(display="none"),
@@ -160,12 +160,13 @@ class AICircuitSlicer(CircuitSlicer):
             self.anthropic_model_combo.value = models[0]
 
     def _on_ollama_refresh(self, _b):
-        from ollama_client import list_ollama_models
+        from ollama_client import list_ollama_models, resolve_base_url
+        resolved_url = resolve_base_url(self.ollama_url_text.value or None)
         try:
-            models = list_ollama_models(base_url=self.ollama_url_text.value)
+            models = list_ollama_models(base_url=resolved_url)
         except Exception as e:
             self.ollama_status.layout.display = ""
-            self.ollama_status.value = f"<i>Could not reach Ollama at {self.ollama_url_text.value}: {e}</i>"
+            self.ollama_status.value = f"<i>Could not reach Ollama at {resolved_url}: {e}</i>"
             return
         if not models:
             self.ollama_status.layout.display = ""
@@ -230,7 +231,7 @@ class AICircuitSlicer(CircuitSlicer):
                 return None, f"Could not create aggregator client: {e}"
         else:
             from ollama_client import OllamaClient
-            return OllamaClient(base_url=self.ollama_url_text.value), None
+            return OllamaClient(base_url=self.ollama_url_text.value or None), None
 
     # -- Resources tab ----------------------------------------------------
     def _refresh_resources(self):

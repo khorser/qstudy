@@ -1017,3 +1017,111 @@ correctly and consistently. Whether that gap is "frontier vs. local" in
 general or an artifact of what this specific aggregator actually serves
 under these names remains genuinely unverified, per the trust caveat
 opening this section.
+
+## 2026-07-31: full catalog re-survey with working credentials
+
+The first aggregator pass above was run with an invalid key (only
+`claude-fable-5` was visible, and nothing actually generated). Retried
+today with working credentials via a new script, `aggregator_survey.py`,
+which automates exactly the identity-probe-then-narrate workflow used
+by hand above and saves every prompt/response pair to a timestamped JSON
+transcript instead of just a terminal scrollback -- so results here can be
+re-checked without re-spending API calls. Same trust caveat as the
+original aggregator section applies throughout.
+
+### Identity probe across the full catalog (38 models)
+
+`GET /models` now returns 38 entries (`aggregator_transcripts/aggregator_survey_20260731T064932Z.json`),
+not the 1 the invalid key saw before. Sent the same identity-probe
+question as before -- *"What is your exact model name/version, and who
+trained you?..."* -- to all 38. Findings by namespace:
+
+**`claude-*` (10 entries): still broken, same pattern as the original
+section.** `claude-fable-5` is the only one that self-identifies as
+genuine Claude. `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-5`,
+and `claude-sonnet-4-6` all explicitly self-identify as **"Kiro"**
+(`claude-opus-4-6`: *"an AI-powered development environment made by
+Amazon"*; `claude-opus-5`: *"an agentic development environment built by
+AWS"*). `claude-sonnet-5` flatly refused (*"I can't discuss that"*).
+The rest (`claude-haiku-4-5-20251001`, `claude-opus-4-5-20251101`,
+`claude-opus-4-8`, `claude-sonnet-4-5-20250929`) gave no usable
+self-identification either way.
+
+**`gpt-*`/`codex-*` (8 entries): consistent with their label.** All
+self-identify as GPT-5-family/Codex/OpenAI, e.g. `gpt-5.4`: *"I'm Codex,
+a coding agent built on GPT-5... trained by OpenAI."* `gpt-image-2`
+404'd on the chat endpoint -- it's an image-generation model, not a chat
+one, so the probe doesn't apply.
+
+**`gemini-*` (9 entries): consistent, with one clear outlier.** Most
+correctly self-identify as Gemini/Google. **`gemini-3-flash-preview` is
+mislabeled**: it responds *"I am GPT-4o, a large language model trained
+by OpenAI"* -- a Gemini-namespaced endpoint serving something that
+claims to be a completely different provider's model, the same failure
+mode as the Claude namespace but caught here for the first time.
+`gemini-3-pro-high` 503'd (service unavailable, not a content problem).
+
+**`grok-*` (9 entries, including 2 image models): consistent, with one
+clear outlier.** Most correctly self-identify as Grok/xAI. **`grok-4-1-fast-non-reasoning`
+is mislabeled**: it responds *"I'm based on the Claude Sonnet 4 model,
+specifically the version with the model ID `claude-sonnet-4-20250514`.
+I was trained by Anthropic."* -- a Grok-namespaced endpoint claiming to
+be Claude, the mirror image of the Claude-namespace-claiming-Kiro
+problem. `grok-imagine-image`/`grok-imagine-image-pro` returned raw
+base64 image payloads to a text question -- image-generation models,
+not chat, same as `gpt-image-2`.
+
+**Net finding: mislabeling on this aggregator isn't confined to the
+Claude namespace.** Every provider namespace tested now has at least one
+confirmed case of serving a different provider's model under a
+misleading name. The Claude namespace remains the worst offender by
+far (4 of 10 confirmed/likely Kiro, 1 refusal, only 1 confirmed genuine),
+but treat *any* named model on this aggregator as unverified until
+identity-probed, not just Claude-labeled ones.
+
+### Narration comparison: shortlist + Kiro group + extras (12 models)
+
+Ran the full grounded-narration comparison (same Deutsch-Jozsa-`xor`
+slices, same coverage scorer, from `compare_backends.py`) via
+`aggregator_survey.py --narrate` against 12 models: the 4 that passed
+the identity probe cleanly (`claude-fable-5`, `gpt-5.4`,
+`gemini-3.1-pro-high`, `grok-4.5`), the 4 confirmed/likely-Kiro Claude
+entries, plus `gpt-5.5`, `gpt-5.4-mini`, `gemini-3.5-flash`, and
+`grok-4-fast-reasoning` for broader provider coverage. Saved to
+`aggregator_transcripts/aggregator_narrate_2026-07-31.json` (plus two
+standalone retries, `aggregator_narrate_claude-opus-5_retry.json` and
+`aggregator_narrate_gpt-5.4-mini_retry.json`, same directory).
+
+| Model | Identity | Avg. coverage |
+|---|---|---|
+| `claude-fable-5` | genuine Claude | **0.85** |
+| `claude-opus-4-6` | "Kiro" | 0.80 |
+| `claude-opus-4-7` | "Kiro" | 0.73 |
+| `gemini-3.1-pro-high` | genuine Gemini | 0.73 |
+| `grok-4-fast-reasoning` | genuine Grok | 0.73 |
+| `claude-opus-5` | "Kiro" (confirmed on retry) | 0.63 |
+| `claude-sonnet-4-6` | "Kiro" | 0.63 |
+| `grok-4.5` | genuine Grok | 0.63 |
+| `gpt-5.4` | Codex/GPT-5 | 0.55 |
+| `gpt-5.5` | Codex/GPT-5 | 0.45 |
+| `gemini-3.5-flash` | genuine Gemini | 0.38 |
+| `gpt-5.4-mini` | ChatGPT/OpenAI | 0.23 |
+
+`claude-fable-5` -- the only confirmed-genuine Claude endpoint on this
+aggregator -- came out on top of the entire 12-model set. The two
+top Kiro entries (`claude-opus-4-6`, `claude-opus-4-7`) scored close
+behind it, ahead of every non-Claude-namespace model tested here except
+`gemini-3.1-pro-high` and `grok-4-fast-reasoning` -- more evidence
+that whatever Kiro actually is, it's a capable model in its own right,
+just not the Claude it claims to be, consistent with the original
+aggregator section's speculation. `gemini-3.5-flash` (0.38) traded a lot
+of quality for speed relative to its own `gemini-3.1-pro-high` sibling
+(0.73), a steeper pro/flash gap than seen elsewhere in this file.
+`gpt-5.4-mini` was the weakest model tested, confirmed on a clean retry
+(all 5 slices scored, 0.23) after an initial run where its `done` slice
+hit a transient JSON-parse error from the aggregator (empty response
+body) and only 4 of 5 slices scored (0.31 avg on those 4) -- the retry
+shows that was a flake, not a capability gap on that specific slice.
+`claude-opus-5`'s identity probe likewise timed out on the first attempt
+and was confirmed as Kiro on retry, consistent with the earlier
+catalog-wide probe.
