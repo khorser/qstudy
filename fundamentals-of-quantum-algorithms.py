@@ -988,7 +988,6 @@ CircuitSlicer(Grover(6, 16), 4, diag=False, common_factors=False);
 # ## AI Explain
 
 # %%
-from ollama_client import OllamaClient
 from ai_circuit_slicer import AICircuitSlicer
 
 s = AICircuitSlicer(DeutschJozsa(3))
