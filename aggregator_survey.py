@@ -91,11 +91,11 @@ def load_credentials():
         os.environ.setdefault("OPENAI_API_KEY", creds.get("api_key", ""))
 
 
-def probe_identity(client, model):
+def probe_identity(client, model, max_tokens=300):
     entry = {"model": model, "probe": IDENTITY_PROBE}
     try:
         resp = client.messages.create(
-            model=model, max_tokens=300,
+            model=model, max_tokens=max_tokens,
             messages=[{"role": "user", "content": IDENTITY_PROBE}],
         )
         entry["response"] = "".join(b.text for b in resp.content if b.type == "text")
@@ -127,7 +127,17 @@ def main():
     parser.add_argument("--models", help="comma-separated model ids (default: everything the aggregator lists)")
     parser.add_argument("--narrate", action="store_true",
                          help="also run the DeutschJozsa narration comparison per model (more tokens/cost)")
-    parser.add_argument("--max-tokens", type=int, default=300)
+    parser.add_argument("--max-tokens", type=int, default=300,
+                         help="Used for narration, and as the identity probe's "
+                              "budget too unless --identity-max-tokens overrides "
+                              "it. Reasoning models can burn this whole budget on "
+                              "hidden chain-of-thought before any visible text --"
+                              "raise it if you see empty/truncated/garbled output.")
+    parser.add_argument("--identity-max-tokens", type=int, default=None,
+                         help="Overrides --max-tokens for just the identity probe. "
+                              "Rarely needed -- mainly for keeping identity-probe "
+                              "cost down while still raising --max-tokens for "
+                              "--narrate, or vice versa.")
     parser.add_argument("--temperature", type=float, default=None,
                          help="Omit to use the aggregator's own default.")
     parser.add_argument("--out", default=None,
@@ -156,6 +166,7 @@ def main():
     print(f"Surveying {len(models)} model(s): {', '.join(models)}\n")
 
     client = AggregatorClient()
+    identity_max_tokens = args.identity_max_tokens if args.identity_max_tokens is not None else args.max_tokens
 
     all_facts = None
     if args.narrate:
@@ -166,7 +177,7 @@ def main():
     results = []
     for model in models:
         print(f"--- {model} ---")
-        identity = probe_identity(client, model)
+        identity = probe_identity(client, model, max_tokens=identity_max_tokens)
         if "error" in identity:
             print(f"  identity probe error: {identity['error']}")
         else:

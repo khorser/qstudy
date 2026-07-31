@@ -1380,3 +1380,89 @@ genuine DeepSeek-R1 model *can* plan and execute a correct tool-calling
 solution to this exact task. It's just a much less efficient planner than
 the smaller qwen models when it does, burning almost 4x the tool calls on
 redundant re-checks that added no new information.
+
+## 2026-07-31: OpenRouter flagship vs. lightweight-sibling comparison -- GPT, Gemini, DeepSeek
+
+Queried OpenRouter's live catalog (`list_aggregator_models()`, 337 entries)
+rather than guessing model ids, then picked one same-generation
+flagship/lightweight pair per family: `openai/gpt-5.4` /
+`openai/gpt-5.4-mini`, `google/gemini-3.1-pro-preview` /
+`google/gemini-3.1-flash-lite`, `deepseek/deepseek-v4-pro` /
+`deepseek/deepseek-v4-flash`. Ran via `aggregator_survey.py` against
+OpenRouter's OpenAI-compatible endpoint (`OPENAI_BASE_URL=https://openrouter.ai/api/v1`,
+distinct from the native-Anthropic-shape `.../api` used in the section
+above -- this endpoint takes the `/v1` suffix, no doubling issue here since
+`aggregator_client.py` doesn't append a fixed path the way the `anthropic`
+SDK does).
+
+**False alarm, caught and resolved before writing it down as fact**: the
+first pass (default `max_tokens=300`, matching `compare_backends.py`'s
+default) produced a startling identity-probe response from
+`deepseek/deepseek-v4-pro`: *"I'm Claude, specifically Claude 3.5 Sonnet,
+developed by Anthropic."* -- which looked like exactly the kind of
+mislabeling `agentic_testing_notes.md` already documents for ModelProxy.
+Same pass also produced near-empty/garbled narrations and very low
+coverage for `google/gemini-3.1-pro-preview` (0.07) and
+`deepseek/deepseek-v4-flash` (0.23). Before trusting any of that,
+re-ran raw (non-`aggregator_survey.py`) calls with `max_tokens=1500` and
+inspected `usage.completion_tokens_details.reasoning_tokens` directly:
+all three models spend several hundred tokens on hidden reasoning before
+any visible text, so at `max_tokens=300` the visible `content` field was
+either empty or a truncated fragment of that hidden reasoning leaking
+through -- not a real identity claim. At `max_tokens=1500`,
+`deepseek/deepseek-v4-pro` cleanly self-identifies as genuine DeepSeek-V3
+(`finish_reason: stop`, 362 reasoning tokens), `deepseek/deepseek-v4-flash`
+as DeepSeek (uncertain which exact variant -- R1/V3, itself unsure), and
+`google/gemini-3.1-pro-preview` as genuine Gemini/Google DeepMind. Same
+root cause already seen this session with `claude-opus-5` via OpenRouter:
+reasoning models silently burn a fixed `max_tokens` budget on invisible
+chain-of-thought before emitting visible text, and a low budget produces
+misleading (in this case briefly alarming) garbage rather than a clear
+error.
+
+**Real, minor tooling gap found in the process, fixed same session**:
+`aggregator_survey.py`'s `probe_identity()` hardcoded `max_tokens=300` for
+the identity probe, independent of the script's `--max-tokens` flag
+(which only affected the narration calls). So raising `--max-tokens` fixed
+narration coverage for reasoning-heavy models but *not* the identity check
+-- confirmed by seeing `deepseek/deepseek-v4-pro`'s identity line come
+back empty even in the `--max-tokens 2000` reruns below. Fixed:
+`probe_identity()` now takes `max_tokens`, and the identity probe uses
+`--identity-max-tokens` if given, else falls back to `--max-tokens` (so
+bumping `--max-tokens` alone now fixes the identity probe too, with an
+independent override available if the two need to diverge). Verified
+against `deepseek/deepseek-v4-pro` at `--max-tokens 1500`: identity line
+now comes back non-empty ("I'm DeepSeek, a large language model created
+by...DeepSeek") instead of blank.
+
+**Final, fair comparison** -- reran all six models together at a uniform
+`max_tokens=2000` (`aggregator_transcripts/openrouter_flagship_vs_light_maxtok2000_final_2026-07-31.json`)
+so no model is penalized by the 300-token default:
+
+| Model | Avg coverage |
+|---|---|
+| `openai/gpt-5.4` | 0.55 |
+| `openai/gpt-5.4-mini` | 0.40 |
+| `google/gemini-3.1-pro-preview` | 0.63 |
+| `google/gemini-3.1-flash-lite` | 0.62 |
+| `deepseek/deepseek-v4-pro` | 0.52 |
+| `deepseek/deepseek-v4-flash` | 0.45 |
+
+Flagship beat its lightweight sibling in all three families, though by a
+wide margin only for GPT (0.55 vs. 0.40); Gemini's pair was nearly tied
+(0.63 vs. 0.62) and DeepSeek's gap was moderate (0.52 vs. 0.45). None of
+these six numbers is directly comparable to `claude-fable-5`'s 0.85 from
+the ModelProxy comparison above or to the native-Anthropic-via-OpenRouter
+numbers in the section below -- different task-budget history and (for
+ModelProxy) an unresolved trust caveat on top. Take this table as an
+internal ranking across these six, not a cross-section comparison.
+
+No genuine mislabeling found in this round once the reasoning-budget
+confound was accounted for -- all six identify as what their `openai/`,
+`google/`, or `deepseek/` catalog prefix implies. Transcripts:
+`aggregator_transcripts/openrouter_flagship_vs_light_2026-07-31.json`
+(first pass, `max_tokens=300`, kept for the record of the false alarm),
+`aggregator_transcripts/openrouter_flagship_vs_light_maxtok2000_2026-07-31.json`
+(partial rerun, 3 low scorers only), and
+`aggregator_transcripts/openrouter_flagship_vs_light_maxtok2000_final_2026-07-31.json`
+(the uniform final comparison table above).
