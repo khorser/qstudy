@@ -167,11 +167,30 @@ class AICircuitSlicer(CircuitSlicer):
             self.anthropic_status.layout.display = ""
             self.anthropic_status.value = "<i>Anthropic API reachable but returned no models</i>"
             return
+        self.anthropic_model_combo.options = models
+        # A custom base_url pointed at a third-party proxy (e.g. OpenRouter)
+        # may implement /v1/models as its own full, unrelated catalog rather
+        # than Anthropic's actual model list (confirmed: OpenRouter returns
+        # ~365 provider-prefixed entries here, not just its Claude models).
+        # Falling back to models[0] in that case would silently pick some
+        # unrelated model instead of erroring -- only auto-select when the
+        # list looks like it's actually Anthropic's, so the current value
+        # (or the user manually typing one) isn't clobbered by a bad guess.
+        looks_like_anthropic_catalog = len(models) < 50 and any("claude" in m.lower() for m in models)
+        if self.anthropic_model_combo.value not in models:
+            if looks_like_anthropic_catalog:
+                self.anthropic_model_combo.value = models[0]
+            else:
+                self.anthropic_status.layout.display = ""
+                self.anthropic_status.value = (
+                    f"<i>Refresh returned {len(models)} models -- doesn't look like "
+                    "Anthropic's own catalog (likely a third-party base_url's full "
+                    "model list). Options are populated below; pick or type the "
+                    "model id you actually want rather than trusting the default.</i>"
+                )
+                return
         self.anthropic_status.layout.display = "none"
         self.anthropic_status.value = ""
-        self.anthropic_model_combo.options = models
-        if self.anthropic_model_combo.value not in models:
-            self.anthropic_model_combo.value = models[0]
 
     def _on_ollama_refresh(self, _b):
         from ollama_client import list_ollama_models, resolve_base_url

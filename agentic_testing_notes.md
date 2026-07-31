@@ -738,10 +738,13 @@ User has an API key for `ModelProxy`, an OpenAI-compatible aggregator, and
 wants to compare frontier models (GPT, Gemini) against Claude and the
 local models above. `GET /v1/models` returned a catalog including entries
 like `claude-opus-5`, `claude-opus-4-6`, `claude-opus-4-7`, and
-`claude-sonnet-4-6` -- none of which fit Anthropic's actual current
-lineup (Fable 5, Sonnet 5, Haiku 4.5, Opus 4.8; no "Opus 5" or
-intermediate 4-6/4-7 exists). That's a concrete, verifiable
-inconsistency, not just unfamiliarity -- the GPT-5.x/Gemini-3.x/Grok-4.x
+`claude-sonnet-4-6`. (Correction, added after later testing: `claude-opus-5`
+*is* a real, current model -- confirmed by successfully calling it
+through OpenRouter later in this file. `claude-opus-4-6`/`claude-opus-4-7`
+still don't fit Anthropic's actual lineup, so the catalog-naming argument
+below is weaker than originally stated; the identity-probe evidence a few
+paragraphs down is what actually carries this section's conclusion.) The
+GPT-5.x/Gemini-3.x/Grok-4.x
 entries are less clear-cut (those providers could plausibly have shipped
 real updates after this environment's knowledge cutoff), but given the
 Claude portion of the catalog looks fabricated, **nothing tested through
@@ -1226,8 +1229,10 @@ catalog-wide probe.
 Separately from ModelProxy, tested OpenRouter directly against the real
 `anthropic` SDK -- `anthropic.Anthropic(base_url="https://openrouter.ai/api", api_key=...)`,
 no `aggregator_client.py`-style shim needed, since OpenRouter genuinely
-implements Anthropic's native `/v1/messages` shape for its Claude models,
-not just an OpenAI-compatible one.
+implements Anthropic's native `/v1/messages` shape as an entry point --
+and, per a correction below, that entry point isn't Claude-only, so this
+isn't strictly necessary for a non-Claude model, just convenient when the
+rest of a codebase already assumes an `anthropic.Anthropic`-shaped client.
 
 **A real caveat surfaced first**: the `anthropic` SDK always posts to a
 fixed `/v1/messages` path relative to `base_url`. Passing
@@ -1331,10 +1336,26 @@ limitation, or specific to the 8b distillation / Ollama's chat-template
 handling of it? OpenRouter's catalog lists the full model as
 `deepseek/deepseek-r1` (distinct from `deepseek/deepseek-r1-distill-llama-70b`,
 a different distillation, and `deepseek/deepseek-r1-0528`, a later
-checkpoint). Unlike the Claude-family test above, this needed the
-OpenAI-compatible shape (`aggregator_client.py`'s `AggregatorClient`,
-`base_url="https://openrouter.ai/api/v1"`) rather than Anthropic's native
-one, since it's not an Anthropic-branded model. Transcript:
+checkpoint). Used the OpenAI-compatible shape (`aggregator_client.py`'s
+`AggregatorClient`, `base_url="https://openrouter.ai/api/v1"`) rather
+than Anthropic's native one, on the assumption that the native
+`/v1/messages` endpoint would reject a non-Anthropic-branded model id.
+**That assumption turned out to be wrong**, checked afterward: calling
+`anthropic.Anthropic(base_url="https://openrouter.ai/api", ...)` with
+`model="deepseek/deepseek-r1"` directly against `/v1/messages` also
+works -- the response even echoes back `model: "deepseek/deepseek-r1"`,
+confirming it's genuinely routed there, not silently substituted.
+OpenRouter's native-shape entry point isn't Claude-only after all; the
+OpenAI-compatible path here was a safe choice, just not a strictly
+necessary one. This also means `AICircuitSlicer`'s Anthropic backend's
+"Refresh models" button is a live footgun with a third-party `base_url`:
+`client.models.list()` against OpenRouter returns its full ~365-entry,
+provider-prefixed OpenAI-shaped catalog (not filtered to Claude), and the
+refresh handler's `if value not in models: value = models[0]` fallback
+would silently select whatever sorts first -- some unrelated model, not
+an error. Not yet fixed in code; worth a follow-up (either restrict the
+fallback, or just document that Refresh is Anthropic-API-specific and to
+type the model id directly for third-party providers). Transcript:
 `aggregator_transcripts/openrouter_deepseek_r1_agentic_2026-07-31.txt`.
 
 **Identity probe**: correctly self-identifies as *"DeepSeek-R1, developed
