@@ -16,8 +16,10 @@ then layer the new behavior on top, rather than editing qstudy.py. This
 keeps the working simulation/instrumentation path untouched and the diff
 reviewable in isolation.
 """
+from html import escape
+
 import ipywidgets as widgets
-from IPython.display import clear_output, HTML
+from IPython.display import clear_output, display, HTML
 from qiskit.quantum_info import partial_trace, entropy
 
 from qstudy import CircuitSlicer
@@ -380,7 +382,14 @@ class AICircuitSlicer(CircuitSlicer):
             try:
                 narration = explain_slice(client, facts, model=self._current_model,
                                            max_tokens=effective_max_tokens, **extra)
-                display(HTML(f"<b>Slice \"{facts.label}\" ({self.backend_dropdown.value}, "
-                              f"{self._current_model}):</b><br>{narration}"))
+                # Both narration and a Combobox model id can be externally
+                # supplied. Escape them before using HTML() so an endpoint
+                # response is displayed as text, not rendered as markup.
+                label = escape(str(facts.label))
+                backend = escape(str(self.backend_dropdown.value))
+                model = escape(str(self._current_model))
+                safe_narration = escape(narration).replace("\n", "<br>\n")
+                display(HTML(f"<b>Slice \"{label}\" ({backend}, {model}):</b><br>"
+                             f"{safe_narration}"))
             except Exception as e:
                 print(f"AI Explain failed: {e}")

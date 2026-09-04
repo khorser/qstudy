@@ -162,6 +162,13 @@ and compares the *traces* (step count, which tools got used, whether
 anything errored), since unlike narration there's no single "correct"
 answer to score against.
 
+**`run_agent_aggregator.py`** — runs the same bounded agent against an
+OpenAI-compatible `/chat/completions` provider, preserving its native
+`tool_call_id` protocol. It reads `OPENAI_BASE_URL` and `OPENAI_API_KEY` or
+the local gitignored `.aggregator_credentials.json` file; run it from the
+repository root with `pixi run -e qc python
+qstudy/run_agent_aggregator.py --model provider/model-id`.
+
 `agentic_testing_notes.md` logs a much broader run of both scripts against
 six local Ollama models and, via the aggregator above, several frontier
 models (GPT-5.4, Gemini 3.1/3.5). The standout finding: most of the

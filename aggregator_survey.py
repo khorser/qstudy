@@ -91,12 +91,16 @@ def load_credentials():
         os.environ.setdefault("OPENAI_API_KEY", creds.get("api_key", ""))
 
 
-def probe_identity(client, model, max_tokens=300):
+def probe_identity(client, model, max_tokens=300, temperature=None):
     entry = {"model": model, "probe": IDENTITY_PROBE}
     try:
+        extra = {}
+        if temperature is not None:
+            extra["temperature"] = temperature
         resp = client.messages.create(
             model=model, max_tokens=max_tokens,
             messages=[{"role": "user", "content": IDENTITY_PROBE}],
+            **extra,
         )
         entry["response"] = "".join(b.text for b in resp.content if b.type == "text")
     except Exception as e:
@@ -118,6 +122,13 @@ def narrate(client, model, all_facts, max_tokens=300, **extra):
         except Exception as e:
             rows[label] = {"narration": f"[ERROR: {e}]", "coverage": None, "missing": None}
     return rows
+
+
+def ensure_output_directory(out_path):
+    """Create the parent directory for an output path, when it has one."""
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
 
 def main():
@@ -146,9 +157,9 @@ def main():
 
     load_credentials()
 
-    narrate_extra = {}
+    request_extra = {}
     if args.temperature is not None:
-        narrate_extra["temperature"] = args.temperature
+        request_extra["temperature"] = args.temperature
 
     if args.models:
         models = [m.strip() for m in args.models.split(",") if m.strip()]
@@ -177,7 +188,8 @@ def main():
     results = []
     for model in models:
         print(f"--- {model} ---")
-        identity = probe_identity(client, model, max_tokens=identity_max_tokens)
+        identity = probe_identity(client, model, max_tokens=identity_max_tokens,
+                                  **request_extra)
         if "error" in identity:
             print(f"  identity probe error: {identity['error']}")
         else:
@@ -185,7 +197,7 @@ def main():
         entry = {"model": model, "identity_probe": identity}
 
         if args.narrate:
-            rows = narrate(client, model, all_facts, max_tokens=args.max_tokens, **narrate_extra)
+            rows = narrate(client, model, all_facts, max_tokens=args.max_tokens, **request_extra)
             entry["narration"] = rows
             covs = [r["coverage"] for r in rows.values() if r["coverage"] is not None]
             if covs:
@@ -193,10 +205,10 @@ def main():
         results.append(entry)
         print()
 
-    os.makedirs(TRANSCRIPTS_DIR, exist_ok=True)
     out_path = args.out or os.path.join(
         TRANSCRIPTS_DIR, f"aggregator_survey_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
     )
+    ensure_output_directory(out_path)
     with open(out_path, "w") as f:
         json.dump({
             "identity_probe_question": IDENTITY_PROBE,

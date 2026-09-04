@@ -400,6 +400,15 @@ def run_agent_aggregator(base_url, api_key, algo, question, model, max_steps=8, 
     """
     import requests
 
+    if not base_url:
+        raise ValueError("base_url is required for an OpenAI-compatible backend")
+    if not api_key:
+        raise ValueError("api_key is required for an OpenAI-compatible backend")
+    if max_steps < 1:
+        raise ValueError("max_steps must be at least 1")
+    if max_tokens is not None and max_tokens < 1:
+        raise ValueError("max_tokens must be positive or None")
+
     tools = CircuitAnalystTools(algo)
     dispatch = _make_dispatch(tools)
     openai_tools = _tool_schemas_to_ollama(TOOL_SCHEMAS)  # same shape OpenAI expects
@@ -428,9 +437,20 @@ def run_agent_aggregator(base_url, api_key, algo, question, model, max_steps=8, 
         )
         resp.raise_for_status()
         data = resp.json()
-        message = data["choices"][0]["message"]
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if (not isinstance(choices, list) or not choices
+                or not isinstance(choices[0], dict)
+                or not isinstance(choices[0].get("message"), dict)):
+            raise RuntimeError(
+                "OpenAI-compatible backend returned no assistant message: "
+                + json.dumps(data)[:500]
+            )
+        message = choices[0]["message"]
         tool_calls = message.get("tool_calls") or []
-        content = message.get("content") or ""
+        # Preserve null content in the assistant message. Tool-call responses
+        # commonly use it, and some OpenAI-compatible servers require the
+        # follow-up history to match the original response exactly.
+        content = message.get("content")
 
         assistant_msg = {"role": "assistant", "content": content}
         if tool_calls:
@@ -438,19 +458,30 @@ def run_agent_aggregator(base_url, api_key, algo, question, model, max_steps=8, 
         messages.append(assistant_msg)
 
         if not tool_calls:
-            return content, trace
+            return content or "", trace
 
         for call in tool_calls:
             fn_info = call.get("function", {})
             name = fn_info.get("name")
+            call_id = call.get("id")
+            if not call_id:
+                raise RuntimeError(
+                    "OpenAI-compatible backend returned a tool call without an id"
+                )
+            result = None
             try:
                 args = json.loads(fn_info.get("arguments") or "{}")
-            except json.JSONDecodeError:
+                if not isinstance(args, dict):
+                    raise ValueError("arguments must be a JSON object")
+            except (json.JSONDecodeError, ValueError) as e:
                 args = {}
-            fn = dispatch.get(name)
-            if fn is None:
-                result = {"error": f"unknown tool {name}"}
+                result = {"error": f"invalid arguments for tool {name!r}: {e}"}
+                fn = None
             else:
+                fn = dispatch.get(name)
+            if fn is None and result is None:
+                result = {"error": f"unknown tool {name}"}
+            elif fn is not None:
                 try:
                     result = fn(**args)
                 except Exception as e:
@@ -460,7 +491,7 @@ def run_agent_aggregator(base_url, api_key, algo, question, model, max_steps=8, 
                 print(f"[tool call] {name}({args}) -> {json.dumps(result)[:200]}")
             messages.append({
                 "role": "tool",
-                "tool_call_id": call.get("id"),
+                "tool_call_id": call_id,
                 "content": json.dumps(result),
             })
 
